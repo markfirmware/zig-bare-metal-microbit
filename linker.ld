@@ -4,16 +4,19 @@ SECTIONS {
 
     /DISCARD/ : {
         *(.ARM.exidx)
+    }
+
+    . = 0x0;
+
+    .text : {
+        KEEP(*(.text.boot))
+        *(.text)
         *(.rodata)
     }
 
-    .text 0x0 : {
-        KEEP(*(.text.boot))
-        *(.text)
-    }
+    . = 0x20000000;
 
-    .data 0x20004000 : {
-        *(ARM.exidx)
+    .data : {
         *(.data)
     }
 

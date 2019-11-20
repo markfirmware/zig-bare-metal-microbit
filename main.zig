@@ -1,9 +1,6 @@
 export fn main() noreturn {
     setBssToZero();
-    ClockManagement.crystal_registers.frequency_selector = 0xff;
-    ClockManagement.tasks.start_hf_clock = 1;
-    while (ClockManagement.events.hf_clock_started == 0) {
-    }
+    ClockManagement.startHfClock();
     uart.init();
 
     cycle_activity.init();
@@ -11,8 +8,6 @@ export fn main() noreturn {
     led_matrix_activity.init();
     radio_activity.init();
     status_activity.init();
-
-    led_matrix_activity.drawZigIcon();
 
     while (true) {
         cycle_activity.update();
@@ -24,7 +19,7 @@ export fn main() noreturn {
 }
 
 fn exceptionHandler(exception_number: u32) noreturn {
-    hang("exception number {} ... now idle in arm exception handler", exception_number);
+    panicf("exception number {} ... now idle in arm exception handler", exception_number);
 }
 
 pub fn panic(message: []const u8, trace: ?*builtin.StackTrace) noreturn {
@@ -88,6 +83,7 @@ const Uart = struct {
     }
 
     fn readByte(self: *Self) u8 {
+        Self.events.rx_ready = 0;
         return @truncate(u8, Self.registers.rxd);
     }
 
@@ -405,6 +401,13 @@ const Ficr = struct {
 };
 
 const ClockManagement = struct {
+    fn startHfClock() void {
+        ClockManagement.crystal_registers.frequency_selector = 0xff;
+        ClockManagement.tasks.start_hf_clock = 1;
+        while (ClockManagement.events.hf_clock_started == 0) {
+        }
+    }
+
     const crystal_registers = io(0x40000550,
         struct {
             frequency_selector: u32,
@@ -413,29 +416,29 @@ const ClockManagement = struct {
     const events = io(0x40000100,
         struct {
             hf_clock_started: u32,
+            lf_clock_started: u32,
         }
     );
     const tasks = io(0x40000000,
         struct {
             start_hf_clock: u32,
+            stop_hf_clock: u32,
+            start_lf_clock: u32,
+            stop_lf_clock: u32,
         }
     );
 };
 
-fn channelFrequency(n: u32) u32 {
-    return 2 * (n + 1);
-}
-
 const RadioActivity = struct {
     channel: u32,
+    crc_error_count: u32,
+    enabled: bool,
+    last_seconds: u32,
     last_state: u32,
     packet_buffer: [255]u8,
     rx_count: u32,
-    last_seconds: u32,
 
     fn init(self: *Self) void {
-        Self.registers.packet_ptr = @ptrToInt(&self.packet_buffer);
-        self.channel = 37;
         if (Ficr.override.enable_mask & 0x08 == 0) {
             RadioActivity.override_registers.override0 = Ficr.override.ble_1mbit0;
             RadioActivity.override_registers.override1 = Ficr.override.ble_1mbit1;
@@ -443,44 +446,100 @@ const RadioActivity = struct {
             RadioActivity.override_registers.override3 = Ficr.override.ble_1mbit3;
             RadioActivity.override_registers.override4 = Ficr.override.ble_1mbit4;
         }
-        Self.registers.frequency = channelFrequency(37);
+        self.channel = 37;
+        Self.registers.datawhiteiv = self.channel;
+        Self.registers.packet_ptr = @ptrToInt(&self.packet_buffer);
+        Self.registers.crc_config = 0x103;
+        Self.registers.crc_poly = 0x65b;
+        Self.registers.crc_init = 0x555555;
         Self.registers.mode = 0x3;
         Self.registers.pcnf0 = 0x00020106;
-        Self.registers.pcnf1 = 0x00030000 | self.packet_buffer.len;
+        Self.registers.pcnf1 = 0x02030000 | self.packet_buffer.len;
         const access_address = 0x8e89bed6;
-        Self.registers.base0 = access_address >> 24 & 0xffffff;
-        Self.registers.prefix0 = access_address & 0xff;
+        Self.registers.prefix0 = access_address >> 24 & 0xff;
+        Self.registers.base0 = access_address << 8 & 0xffffff00;
         Self.registers.rx_addresses = 0x01;
         self.last_state = Self.registers.state;
         self.last_seconds = 0;
+        self.crc_error_count = 0;
         self.rx_count = 0;
-        Self.tasks.rx_enable = 1;
+        self.enabled = false;
+    }
+
+    fn reverseAddress(self: *Self, address: []u8) void {
+        var x: u8 = undefined;
+        x = address[0];
+        address[0] = address[5];
+        address[5] = x;
+        x = address[1];
+        address[1] = address[4];
+        address[4] = x;
+        x = address[2];
+        address[2] = address[3];
+        address[3] = x;
+    }
+
+    fn channelToFrequency(self: *Self, channel: u32) u32 {
+        return if (channel == 37)
+            @as(u32, 2)
+        else if (channel == 38)
+            26
+        else if (channel == 39)
+            80
+        else if (channel <= 10)
+            channel * 2 + 4
+        else
+            channel * 2 + 6;
     }
 
     fn update(self: *Self) void {
         const now = cycle_activity.up_time_seconds;
-        if (Self.events.address_received == 1) {
-            Self.events.address_received = 0;
+        if (Self.events.entire_valid_message_received == 1) {
+            Self.events.entire_valid_message_received = 0;
+            if (Self.rx_registers.crc_status != 1) {
+                self.crc_error_count += 1;
+                return;
+            }
             self.rx_count += 1;
-            log("received {} freq {}", self.rx_count, 2400 + Self.registers.frequency);
+            const pdu_type = self.packet_buffer[0] & 0xf;
+            const payload_len = math.min(self.packet_buffer[1] & 0x3f, 50);
+            const s1 = self.packet_buffer[2];
+            var rest = self.packet_buffer[3..3 + payload_len];
+            if (pdu_type <= 0x6 and rest.len >= 7 and rest.len <= 37) {
+                const txrnd = if (self.packet_buffer[0] & 0x40 != 0) "p" else "r";
+                const tx_address = rest[0..6];
+                self.reverseAddress(tx_address);
+                rest = rest[6..];
+                if ((pdu_type == 0x1 or pdu_type == 0x3) and rest.len >= 6) {
+                    const rxrnd = if (self.packet_buffer[0] & 0x80 != 0) "p" else "r";
+                    const rx_address = rest[0..6];
+                    self.reverseAddress(rx_address);
+                    rest = rest[6..];
+                    log("ble type 0x{x}  len {:2} from {}{x} to {}{x} {x}", pdu_type, payload_len, txrnd, tx_address, rxrnd, rx_address, rest);
+                } else if (rest.len >= 9 and rest[0] == 0x02 and rest[1] == 0x01 and rest[2] == 0x06 and rest[3] == 0x1b and rest[4] == 0xff and rest[5] == 0xff and rest[6] == 0xff and rest[7] == 0x39 and rest[8] == 0xa8) {
+                    log("button beacon len {:2} from {}{x} {x}",           payload_len, txrnd, tx_address, rest);
+                } else {
+                    log("ble type 0x{x}  len {:2} from {}{x} {x}", pdu_type, payload_len, txrnd, tx_address, rest);
+                }
+            }
         }
         const new_state = Self.registers.state;
-        if (new_state != self.last_state) {
+        if (!self.enabled or new_state != self.last_state) {
             self.last_state = new_state;
-            if (new_state == 0x02) {
+            if (new_state == 0x00) {
+                Self.tasks.rx_enable = 1;
+            } else if (new_state == 0x02) {
                 self.channel += 1;
                 if (self.channel > 39) {
                     self.channel = 37;
                 }
-                Self.registers.frequency = channelFrequency(self.channel);
+                Self.registers.frequency = self.channelToFrequency(self.channel);
+                Self.registers.datawhiteiv = self.channel;
                 Self.tasks.start = 1;
             } else if (new_state == 0x03) {
             } else {
                 log("ble state 0x{x}", new_state);
             }
-        } else if (new_state == 0x03 and now >= self.last_seconds + 1) {
-            self.last_seconds = now;
-            Self.tasks.stop = 1;
         }
     }
 
@@ -518,14 +577,24 @@ const RadioActivity = struct {
             prefix1: u32,
             unused0x52c: u32,
             rx_addresses: u32,
-            unused0x534: u32,
-            unused0x538: u32,
-            unused0x53c: u32,
+            crc_config: u32,
+            crc_poly: u32,
+            crc_init: u32,
             unused0x540: u32,
             unused0x544: u32,
             unused0x548: u32,
             unused0x54c: u32,
             state: u32,
+            datawhiteiv: u32,
+        }
+    );
+
+    const rx_registers = io(0x40001400,
+        struct {
+            crc_status: u32,
+            unused0x404: u32,
+            unused0x408: u32,
+            rx_crc: u32,
         }
     );
 
@@ -558,7 +627,8 @@ const CycleActivity = struct {
         self.last_second_ticks = 0;
         self.max_cycle_time = 0;
         self.up_time_seconds = 0;
-        Timer0.registers.bit_mode = 0x03;
+        Timer0.registers.mode = 0x0;
+        Timer0.registers.bit_mode = 0x3;
         Timer0.registers.prescaler = 4;
         Timer0.tasks.start = 1;
         timer0.start(5*1000);
@@ -601,12 +671,11 @@ const LedMatrixActivity = struct {
 
     fn init(self: *Self) void {
         Gpio.registers.direction_set = Self.all_led_pins_mask;
-        var row_mask: u32 = 0x2000;
         for (self.scan_lines) |_, i| {
-             self.scan_lines[i] = row_mask | Self.all_led_cols_mask;
-             row_mask <<= 1;
+             self.scan_lines[i] = Self.row_1 << @truncate(u5, i) | Self.all_led_cols_mask;
         }
         self.scan_lines_index = 0;
+        led_matrix_activity.drawZigIcon();
     }
 
     fn update(self: *Self) void {
@@ -617,28 +686,13 @@ const LedMatrixActivity = struct {
         }
     }
 
-    fn setPixel2(self: *Self, x: u32, y: u32, v: u32) void {
-        const full_mask = led_pins_masks[5 * y + x];
-        const col_mask = if (v != 0) full_mask & Self.all_led_cols_mask else 0;
-        const row_mask = full_mask & Self.all_led_rows_mask;
-        const selected_scan_line_index = if (row_mask == Self.row_1) @as(u32, 0) else if (row_mask == Self.row_2) @as(u32, 1) else 2;
-        const was = self.scan_lines[selected_scan_line_index];
-        self.scan_lines[selected_scan_line_index] = was & Self.all_led_rows_mask | was & Self.all_led_cols_mask & ~col_mask;
-    }
-
     fn setPixel(self: *Self, x: u32, y: u32, v: u32) void {
         const n = 5 * y + x;
         const full_mask = led_pins_masks[n];
-        const col_mask = full_mask & Self.all_led_cols_mask;
         const row_mask = full_mask & Self.all_led_rows_mask;
         const selected_scan_line_index = if (row_mask == Self.row_1) @as(u32, 0) else if (row_mask == Self.row_2) @as(u32, 1) else 2;
         const was = self.scan_lines[selected_scan_line_index];
-        var new_cols = was & Self.all_led_cols_mask;
-        if (v == 1) {
-            new_cols &= ~col_mask;
-        } else {
-            new_cols |= col_mask;
-        }
+        const new_cols = was & Self.all_led_cols_mask & ~(if (v != 0) full_mask & Self.all_led_cols_mask else 0);
         self.scan_lines[selected_scan_line_index] = was & Self.all_led_rows_mask | new_cols;
     }
 
@@ -685,14 +739,17 @@ const LedMatrixActivity = struct {
          Self.row_2 | Self.col_6,
          Self.row_3 | Self.col_2,
     };
-    const row_1 = 0x2000;
+    const row_1: u32 = 0x2000;
     const row_2 = 0x4000;
     const row_3 = 0x8000;
     const Self = @This();
 };
 
 const KeyboardActivity = struct {
+    column: u32,
+
     fn init(self: *Self) void {
+        self.column = 1;
     }
 
     fn update(self: *Self) void {
@@ -701,13 +758,17 @@ const KeyboardActivity = struct {
         }
         const byte = uart.readByte();
         switch (byte) {
-            'r' => {
-                cycle_activity.max_cycle_time = 0;
+            12 => {
+                status_activity.redraw();
             },
             '\r' => {
                 uart.writeText("\n");
+                self.column = 1;
             },
-            else => uart.writeByteBlocking(byte),
+            else => {
+                uart.writeByteBlocking(byte);
+                self.column += 1;
+            },
         }
     }
 
@@ -721,8 +782,12 @@ const StatusActivity = struct {
         Gpio.cnf_registers.cnf17 = 0; // connect button a and b inputs
         Gpio.cnf_registers.cnf26 = 0;
         self.prev_now = cycle_activity.up_time_seconds;
+        self.redraw();
+    }
+
+    fn redraw(self: *Self) void {
         term.clearScreen();
-        term.setScrollingRegion(6, 999);
+        term.setScrollingRegion(6, 99);
         term.move(5, 1);
         log("keyboard input will be echoed below:");
     }
@@ -735,14 +800,13 @@ const StatusActivity = struct {
             const button_b_pin = 26;
             const button_a = if (Gpio.registers.in & (1 << button_a_pin) == 0) "pressed " else "released";
             const button_b = if (Gpio.registers.in & (1 << button_b_pin) == 0) "pressed " else "released";
-            term.saveCursor();
             term.hideCursor();
             term.move(1, 1);
-            term.line("up {}s cycle {}us max {}us", cycle_activity.up_time_seconds, cycle_activity.cycle_time, cycle_activity.max_cycle_time);
+            term.line("up {:3}s cycle {}us max {}us", cycle_activity.up_time_seconds, cycle_activity.cycle_time, cycle_activity.max_cycle_time);
             term.line("gpio.in {x:8} button a {} button b {}", Gpio.registers.in & ~@as(u32, 0x0300fff0), button_a, button_b);
-            term.line("ble rx {} frequency {}", radio_activity.rx_count, 2400 + RadioActivity.registers.frequency);
-            term.restoreCursor();
+            term.line("ble rx {} error {} frequency {}", radio_activity.rx_count, radio_activity.crc_error_count, RadioActivity.registers.frequency + 2400);
             term.showCursor();
+            term.move(99, keyboard_activity.column);
             self.prev_now = now;
         }
     }
@@ -785,8 +849,9 @@ const Timer0 = struct {
         }
     );
 
-    const registers = io(0x40008508,
+    const registers = io(0x40008504,
         struct {
+            mode: u32,
             bit_mode: u32,
             unused0x50c: u32,
             prescaler: u32,
@@ -798,6 +863,8 @@ const Timer0 = struct {
     const tasks = io(0x40008000,
         struct {
             start: u32,
+            stop: u32,
+            count: u32,
         }
     );
 };

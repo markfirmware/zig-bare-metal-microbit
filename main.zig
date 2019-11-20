@@ -897,5 +897,5 @@ const fmt = std.fmt;
 const math = std.math;
 const name = "zig-bare-metal-microbit";
 const NoError = error{};
-const release_tag = "0.1";
+const release_tag = "0.2";
 const std = @import("std");

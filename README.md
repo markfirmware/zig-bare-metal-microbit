@@ -1,6 +1,7 @@
 # zig-bare-metal-microbit
 
-Displays "Z" on the leds
+* Displays "Z" on the leds
+* Events from buttons A and B are broadcast on ble and when received are printed on the uart line
 
 The goal is to replace the [ble buttons broadcaster](https://github.com/markfirmware/microbit-samples/blob/master/source/examples/blebuttonsbroadcaster/main.cpp) with zig on bare metal. This broadcaster is processed by [ultibo-ble-observer](https://github.com/markfirmware/ultibo-ble-observer/releases). Although it has no encryption, no privacy and no authentication, it is still useful for controlling a model railroad in a home or club setting, or at a demo.
 

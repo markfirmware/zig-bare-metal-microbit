@@ -1,3 +1,4 @@
+*.asm.*
 *.bin
+*.hex
 *.o
-main

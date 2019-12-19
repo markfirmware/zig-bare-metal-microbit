@@ -9,7 +9,8 @@ SECTIONS {
     . = 0x0;
 
     .text : {
-        KEEP(*(.text.boot))
+        KEEP(*(.text.start.mission00))
+        KEEP(*(.text.start.*))
         *(.text)
         *(.rodata)
     }

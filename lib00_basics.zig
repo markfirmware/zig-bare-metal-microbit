@@ -5,22 +5,22 @@ pub const Bss = struct {
 };
 
 pub const ClockManagement = struct {
-    const events = io(0x40000100, struct {
+    pub fn prepareHf() void {
+        crystal_registers.frequency_selector = 0xff;
+        tasks.start_hf_clock = 1;
+        while (events.hf_clock_started == 0) {}
+    }
+
+    pub const events = io(0x40000100, struct {
         hf_clock_started: u32,
         lf_clock_started: u32,
     });
 
-    pub fn prepareHf() void {
-        ClockManagement.crystal_registers.frequency_selector = 0xff;
-        ClockManagement.tasks.start_hf_clock = 1;
-        while (ClockManagement.events.hf_clock_started == 0) {}
-    }
-
-    const crystal_registers = io(0x40000550, struct {
+    pub const crystal_registers = io(0x40000550, struct {
         frequency_selector: u32,
     });
 
-    const tasks = io(0x40000000, struct {
+    pub const tasks = io(0x40000000, struct {
         start_hf_clock: u32,
         stop_hf_clock: u32,
         start_lf_clock: u32,
@@ -35,7 +35,7 @@ pub const Exceptions = struct {
 };
 
 pub const Ficr = struct {
-    const radio = io(0x100000a0, struct {
+    pub const radio = io(0x100000a0, struct {
         device_address_type: u32,
         device_address0: u32,
         device_address1: u32,
@@ -43,39 +43,20 @@ pub const Ficr = struct {
 };
 
 pub const Gpio = struct {
-    const config_registers = io(0x50000700, struct {
-        cnf00: u32,
-        cnf01: u32,
-        cnf02: u32,
-        cnf03: u32,
-        cnf04: u32,
-        cnf05: u32,
-        cnf06: u32,
-        cnf07: u32,
-        cnf08: u32,
-        cnf09: u32,
-        cnf10: u32,
-        cnf11: u32,
-        cnf12: u32,
-        cnf13: u32,
-        cnf14: u32,
-        cnf15: u32,
-        cnf16: u32,
-        cnf17: u32,
-        cnf18: u32,
-        cnf19: u32,
-        cnf20: u32,
-        cnf21: u32,
-        cnf22: u32,
-        cnf23: u32,
-        cnf24: u32,
-        cnf25: u32,
-        cnf26: u32,
-        cnf27: u32,
-        cnf28: u32,
-        cnf30: u32,
-        cnf31: u32,
-    });
+    pub const config = io(0x50000700, [32]u32);
+
+    pub const config_masks = struct {
+        pub const input = 0x0;
+        pub const output = 0x1;
+    };
+
+    pub const led_row_driver_number_and_column_selector_number_indexed_by_y_then_x = [5][5][2]u32{
+        .{ .{ 1, 1 }, .{ 2, 4 }, .{ 1, 2 }, .{ 2, 5 }, .{ 1, 3 } },
+        .{ .{ 3, 4 }, .{ 3, 5 }, .{ 3, 6 }, .{ 3, 7 }, .{ 3, 8 } },
+        .{ .{ 2, 2 }, .{ 1, 9 }, .{ 2, 3 }, .{ 3, 9 }, .{ 2, 1 } },
+        .{ .{ 1, 8 }, .{ 1, 7 }, .{ 1, 6 }, .{ 1, 5 }, .{ 1, 4 } },
+        .{ .{ 3, 3 }, .{ 2, 7 }, .{ 3, 1 }, .{ 2, 6 }, .{ 3, 2 } },
+    };
 
     pub const registers = io(0x50000504, struct {
         out: u32,
@@ -86,47 +67,182 @@ pub const Gpio = struct {
         direction_set: u32,
         direction_clear: u32,
     });
+
+    pub const registers_masks = struct {
+        pub const button_a_active_low: u32 = 1 << 17;
+        pub const button_b_active_low: u32 = 1 << 26;
+        pub const ring0: u32 = 1 << 3;
+        pub const ring1: u32 = 1 << 2;
+        pub const ring2: u32 = 1 << 1;
+        pub const three_led_row_drivers: u32 = 0x7 << 13;
+        pub const nine_led_column_selectors_active_low: u32 = 0x1ff << 4;
+    };
 };
 
 pub const Gpiote = struct {
-    const config_registers = io(0x40006510, struct {
-        config0: u32,
-    });
+    pub const config = io(0x40006510, [4]u32);
 
-    const tasks = io(0x40006000, struct {
-        out0: u32,
-    });
+    pub const config_masks = struct {
+        pub const disable = 0x0;
+    };
+
+    pub const tasks = struct {
+        pub const out = io(0x40006000, [4]u32);
+    };
+};
+
+pub const LedMatrixActivity = struct {
+    scan_lines: [3]u32,
+    scan_lines_index: u32,
+    scan_timer: TimeKeeper,
+
+    fn prepare(self: *LedMatrixActivity) void {
+        Gpio.registers.direction_set = Gpio.registers_masks.three_led_row_drivers | Gpio.registers_masks.nine_led_column_selectors_active_low;
+        for (self.scan_lines) |*scan_line| {
+            scan_line.* = 0;
+        }
+        self.scan_lines_index = 0;
+        self.putChar('Z');
+        self.scan_timer.prepare(5 * 1000);
+    }
+
+    fn putChar(self: *LedMatrixActivity, byte: u8) void {
+        self.putImage(self.getImage(byte));
+    }
+
+    fn putImage(self: *LedMatrixActivity, image: u32) void {
+        var mask: u32 = 0x1;
+        var y: u32 = 4;
+        while (true) {
+            var x: u32 = 4;
+            while (true) {
+                const v: u32 = if (image & mask != 0) 1 else 0;
+                self.putPixel(x, y, v);
+                mask <<= 1;
+                if (x == 0) {
+                    break;
+                }
+                x -= 1;
+            }
+            if (y == 0) {
+                break;
+            }
+            y -= 1;
+        }
+    }
+
+    fn putPixel(self: *LedMatrixActivity, x: u32, y: u32, v: u32) void {
+        const row_driver_number_and_column_selector_number = Gpio.led_row_driver_number_and_column_selector_number_indexed_by_y_then_x[y][x];
+        const selected_scan_line_index = row_driver_number_and_column_selector_number[0] - 1;
+        const col_mask = @as(u32, 0x10) << @truncate(u5, row_driver_number_and_column_selector_number[1] - 1);
+        self.scan_lines[selected_scan_line_index] = self.scan_lines[selected_scan_line_index] & ~col_mask | v * col_mask;
+    }
+
+    fn update(self: *LedMatrixActivity) void {
+        if (self.scan_timer.isFinished()) {
+            self.scan_timer.reset();
+            const keep = Gpio.registers.out & ~(Gpio.registers_masks.three_led_row_drivers | Gpio.registers_masks.nine_led_column_selectors_active_low);
+            const row_pins = @as(u32, 0x2000) << @truncate(u5, self.scan_lines_index);
+            const col_pins = ~self.scan_lines[self.scan_lines_index] & Gpio.registers_masks.nine_led_column_selectors_active_low;
+            Gpio.registers.out = keep | row_pins | col_pins;
+            self.scan_lines_index = (self.scan_lines_index + 1) % self.scan_lines.len;
+        }
+    }
+
+    fn getImage(self: LedMatrixActivity, byte: u8) u32 {
+        return switch (byte) {
+            '2' => 0b0111010001001100100001111,
+            'A' => 0b0111010001111111000110001,
+            'B' => 0b1111010001111111000111110,
+            'Z' => 0b1111100010001000100011111,
+            ' ' => 0b0000000000000000000000000,
+            else => 0b0000000000001000000000000,
+        };
+    }
 };
 
 pub const Ppi = struct {
-    const registers = io(0x4001f500, struct {
+    pub const registers = io(0x4001f500, struct {
         channel_enable: u32,
         channel_enable_set: u32,
         channel_enable_clear: u32,
-        unused0x50c: u32,
-        channel0_event_end_point: u32,
-        channel0_task_end_point: u32,
-        channel1_event_end_point: u32,
-        channel1_task_end_point: u32,
+    });
+
+    pub const channels = io(0x4001f510, [16]struct {
+        event_end_point: u32,
+        task_end_point: u32,
+    });
+};
+
+pub const Radio = struct {
+    pub const events = io(0x40001100, struct {
+        ready: u32,
+        address_completed: u32,
+        payload_completed: u32,
+        packet_completed: u32,
+        disabled: u32,
+    });
+
+    pub const registers = io(0x40001504, struct {
+        packet_ptr: u32,
+        frequency: u32,
+        tx_power: u32,
+        mode: u32,
+        pcnf0: u32,
+        pcnf1: u32,
+        base0: u32,
+        base1: u32,
+        prefix0: u32,
+        prefix1: u32,
+        tx_address: u32,
+        rx_addresses: u32,
+        crc_config: u32,
+        crc_poly: u32,
+        crc_init: u32,
+        unused0x540: u32,
+        unused0x544: u32,
+        unused0x548: u32,
+        unused0x54c: u32,
+        state: u32,
+        datawhiteiv: u32,
+    });
+
+    pub const rx_registers = io(0x40001400, struct {
+        crc_status: u32,
+        unused0x404: u32,
+        unused0x408: u32,
+        rx_crc: u32,
+    });
+
+    pub const short_cuts = io(0x40001200, struct {
+        shorts: u32,
+    });
+
+    pub const tasks = io(0x40001000, struct {
+        tx_enable: u32,
+        rx_enable: u32,
+        start: u32,
+        stop: u32,
+        disable: u32,
     });
 };
 
 pub const Rng = struct {
     pub fn prepare() void {
-        Rng.registers.config = 0x1;
-        Rng.tasks.start = 1;
+        registers.config = 0x1;
+        tasks.start = 1;
     }
 
-    const events = io(0x4000d100, struct {
+    pub const events = io(0x4000d100, struct {
         value_ready: u32,
     });
 
-    const registers = io(0x4000d504, struct {
+    pub const registers = io(0x4000d504, struct {
         config: u32,
         value: u32,
     });
 
-    const tasks = io(0x4000d000, struct {
+    pub const tasks = io(0x4000d000, struct {
         start: u32,
         stop: u32,
     });
@@ -134,53 +250,53 @@ pub const Rng = struct {
 
 pub const Terminal = struct {
     pub fn clearScreen() void {
-        Terminal.pair(2, 0, "J");
+        pair(2, 0, "J");
     }
 
     pub fn hideCursor() void {
-        Uart.writeText(Terminal.csi ++ "?25l");
+        Uart.writeText(csi ++ "?25l");
     }
 
     pub fn line(comptime format: []const u8, args: var) void {
         literal(format, args);
-        Terminal.pair(0, 0, "K");
+        pair(0, 0, "K");
         Uart.writeText("\n");
     }
 
     pub fn move(row: u32, column: u32) void {
-        Terminal.pair(row, column, "H");
+        pair(row, column, "H");
     }
 
     pub fn pair(a: u32, b: u32, letter: []const u8) void {
         if (a <= 1 and b <= 1) {
-            literal("{}{}", .{ Terminal.csi, letter });
+            literal("{}{}", .{ csi, letter });
         } else if (b <= 1) {
-            literal("{}{}{}", .{ Terminal.csi, a, letter });
+            literal("{}{}{}", .{ csi, a, letter });
         } else if (a <= 1) {
-            literal("{};{}{}", .{ Terminal.csi, b, letter });
+            literal("{};{}{}", .{ csi, b, letter });
         } else {
-            literal("{}{};{}{}", .{ Terminal.csi, a, b, letter });
+            literal("{}{};{}{}", .{ csi, a, b, letter });
         }
     }
 
     pub fn reportCursorPosition() void {
-        Uart.writeText("{}", .{Terminal.csi ++ "6n"});
+        Uart.writeText("{}", .{csi ++ "6n"});
     }
 
     pub fn restoreCursor() void {
-        Terminal.pair(0, 0, "u");
+        pair(0, 0, "u");
     }
 
     pub fn saveCursor() void {
-        Terminal.pair(0, 0, "s");
+        pair(0, 0, "s");
     }
 
     pub fn setScrollingRegion(top: u32, bottom: u32) void {
-        Terminal.pair(top, bottom, "r");
+        pair(top, bottom, "r");
     }
 
     pub fn showCursor() void {
-        Uart.writeText(Terminal.csi ++ "?25h");
+        Uart.writeText(csi ++ "?25h");
     }
 
     const csi = "\x1b[";
@@ -192,7 +308,7 @@ pub const TimeKeeper = struct {
 
     fn capture(self: *TimeKeeper) u32 {
         Timer0.capture_tasks.capture0 = 1;
-        return Timer0.capture_compare_registers.cc0;
+        return Timer0.capture_compare_registers[0];
     }
 
     fn prepare(self: *TimeKeeper, duration: u32) void {
@@ -216,51 +332,39 @@ pub const Timer2 = TimerInstance(0x4000a000);
 pub fn TimerInstance(instance_address: u32) type {
     return struct {
         pub fn capture() u32 {
-            Timer.capture_tasks.capture0 = 1;
-            return Timer.capture_compare_registers.cc0;
+            capture_tasks.capture0 = 1;
+            return capture_compare_registers[0];
         }
 
         pub fn prepare() void {
-            Timer.registers.mode = 0x0;
-            //panic invalid width
-            //panic invalid frequency
-            Timer.registers.bit_mode = if (instance_address == 0x40008000) @as(u32, 0x3) else 0x0;
-            Timer.registers.prescaler = if (instance_address == 0x40008000) @as(u32, 4) else 9;
-            Timer.tasks.start = 1;
+            registers.mode = 0x0;
+            registers.bit_mode = if (instance_address == 0x40008000) @as(u32, 0x3) else 0x0;
+            registers.prescaler = if (instance_address == 0x40008000) @as(u32, 4) else 9;
+            tasks.start = 1;
         }
 
-        const capture_compare_registers = io(instance_address + 0x540, struct {
-            cc0: u32,
-            cc1: u32,
-            cc2: u32,
-            cc3: u32,
-        });
+        pub const capture_compare_registers = io(instance_address + 0x540, [4]u32);
 
-        const events = io(instance_address + 0x140, struct {
-            compare0: u32,
-            compare1: u32,
-            compare2: u32,
-            compare3: u32,
-        });
+        pub const events = struct {
+            pub const compare = io(instance_address + 0x140, [4]u32);
+        };
 
-        const short_cuts = io(instance_address + 0x200, struct {
+        pub const short_cuts = io(instance_address + 0x200, struct {
             shorts: u32,
         });
 
-        const capture_tasks = io(instance_address + 0x040, struct {
+        pub const capture_tasks = io(instance_address + 0x040, struct {
             capture0: u32,
         });
 
-        const registers = io(instance_address + 0x504, struct {
+        pub const registers = io(instance_address + 0x504, struct {
             mode: u32,
             bit_mode: u32,
             unused0x50c: u32,
             prescaler: u32,
         });
 
-        const Timer = @This();
-
-        const tasks = io(instance_address + 0x000, struct {
+        pub const tasks = io(instance_address + 0x000, struct {
             start: u32,
             stop: u32,
             count: u32,
@@ -277,7 +381,7 @@ pub const Uart = struct {
 
     pub fn drainTxQueue() void {
         while (uart_singleton.tx_queue_read != uart_singleton.tx_queue_write) {
-            Uart.loadTxd();
+            loadTxd();
         }
     }
 
@@ -285,11 +389,11 @@ pub const Uart = struct {
         const uart_rx_pin = 25;
         const uart_tx_pin = 24;
         Gpio.registers.direction_set = 1 << uart_tx_pin;
-        Uart.registers.pin_select_rxd = uart_rx_pin;
-        Uart.registers.pin_select_txd = uart_tx_pin;
-        Uart.registers.enable = 0x04;
-        Uart.tasks.start_rx = 1;
-        Uart.tasks.start_tx = 1;
+        registers.pin_select_rxd = uart_rx_pin;
+        registers.pin_select_txd = uart_tx_pin;
+        registers.enable = 0x04;
+        tasks.start_rx = 1;
+        tasks.start_tx = 1;
         uart_singleton.tx_busy = false;
         uart_singleton.tx_queue_read = 0;
         uart_singleton.tx_queue_write = 0;
@@ -305,44 +409,44 @@ pub const Uart = struct {
 
     pub fn loadTxd() void {
         if (uart_singleton.tx_queue_read != uart_singleton.tx_queue_write and (!uart_singleton.tx_busy or Uart.events.tx_ready == 1)) {
-            Uart.events.tx_ready = 0;
-            Uart.registers.txd = uart_singleton.tx_queue[uart_singleton.tx_queue_read];
+            events.tx_ready = 0;
+            registers.txd = uart_singleton.tx_queue[uart_singleton.tx_queue_read];
             uart_singleton.tx_queue_read = (uart_singleton.tx_queue_read + 1) % uart_singleton.tx_queue.len;
             uart_singleton.tx_busy = true;
         }
     }
 
     pub fn log(comptime format: []const u8, args: var) void {
-        Uart.literal(format ++ "\n", args);
+        literal(format ++ "\n", args);
     }
 
     pub fn readByte() u8 {
-        Uart.events.rx_ready = 0;
+        events.rx_ready = 0;
         return @truncate(u8, Uart.registers.rxd);
     }
 
     pub fn update() void {
-        Uart.loadTxd();
+        loadTxd();
     }
 
     pub fn writeByteBlocking(byte: u8) void {
         const next = (uart_singleton.tx_queue_write + 1) % uart_singleton.tx_queue.len;
         while (next == uart_singleton.tx_queue_read) {
-            Uart.loadTxd();
+            loadTxd();
         }
         uart_singleton.tx_queue[uart_singleton.tx_queue_write] = byte;
         uart_singleton.tx_queue_write = next;
-        Uart.loadTxd();
+        loadTxd();
     }
 
     pub fn writeText(buffer: []const u8) void {
         for (buffer) |c| {
             switch (c) {
                 '\n' => {
-                    Uart.writeByteBlocking('\r');
-                    Uart.writeByteBlocking('\n');
+                    writeByteBlocking('\r');
+                    writeByteBlocking('\n');
                 },
-                else => Uart.writeByteBlocking(c),
+                else => writeByteBlocking(c),
             }
         }
     }
@@ -382,11 +486,6 @@ pub const Uart = struct {
         stop_tx: u32,
     });
 };
-
-pub fn delayMicroseconds(n: u32) void {
-    const start = timer0.capture();
-    while (timer0.capture() -% start < n) {}
-}
 
 pub fn exceptionHandler(exception_number: u32) noreturn {
     panicf("exception number {} ... now idle in arm exception handler", .{exception_number});
@@ -431,6 +530,5 @@ const std = @import("std");
 extern var __bss_start: u8;
 extern var __bss_end: u8;
 
+var already_panicking: bool = undefined;
 var uart_singleton: Uart = undefined;
-
-pub var already_panicking: bool = undefined;

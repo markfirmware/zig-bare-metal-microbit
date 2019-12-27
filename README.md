@@ -1,5 +1,7 @@
 # zig-bare-metal-microbit
 
+See also [zig-bare-metal-raspberry-pi](https://github.com/markfirmware/zig-bare-metal-raspberry-pi) and [Awesome Zig Bootables](https://github.com/nrdmn/awesome-zig/blob/master/readme.md#Bootables)
+
 * Displays "Z" on the leds
 * Events from buttons A and B are broadcast on ble and when received are printed on the uart line
 

@@ -36,8 +36,8 @@ export fn mission00_main() noreturn {
     led_matrix_activity.init();
     status_activity.init();
 
-    missions[0] = .{ .name = "mission selector", .panic = panic, .vector_table = &mission00_vector_table };
-    missions[1] = .{ .name = "turn on all leds", .panic = @import("mission01_turn_on_all_leds.zig").panic, .vector_table = &mission01_vector_table };
+    missions[0] = .{ .name = "mission selector", .panic = mission00_panic, .vector_table = &mission00_vector_table };
+    missions[1] = .{ .name = "turn on all leds", .panic = @import("mission01_turn_on_all_leds_without_using_any_libraries.zig").panic, .vector_table = &mission01_vector_table };
     missions[2] = .{ .name = "model railroad", .panic = @import("mission02_model_railroad.zig").panic, .vector_table = &mission02_vector_table };
     missions[3] = .{ .name = "unassigned", .panic = @import("mission03_unassigned.zig").panic, .vector_table = &mission03_vector_table };
     missions[4] = .{ .name = "unassigned", .panic = @import("mission04_unassigned.zig").panic, .vector_table = &mission04_vector_table };
@@ -645,6 +645,7 @@ fn io(address: u32, comptime StructType: type) *volatile StructType {
 }
 
 fn missionMenu() void {
+    Gpio.config_registers.cnf17 = 0;
     Gpio.config_registers.cnf26 = 0;
     while (Gpio.registers.in & 0x4000000 == 0) {}
 }
@@ -655,8 +656,8 @@ pub fn mission00_panic(message: []const u8, trace: ?*builtin.StackTrace) noretur
 
 pub fn panic(message: []const u8, trace: ?*builtin.StackTrace) noreturn {
     const ram: [*]u32 = @intToPtr([*]u32, 0x20000000);
-    const mission_panic = @intToPtr(fn ([]const u8, ?*builtin.StackTrace) noreturn, ram[0x1000 - 1]);
-    mission_panic(message, trace);
+    const active_mission_panic = @intToPtr(fn ([]const u8, ?*builtin.StackTrace) noreturn, ram[0x1000 - 1]);
+    active_mission_panic(message, trace);
 }
 
 fn panicf(comptime format: []const u8, args: var) noreturn {

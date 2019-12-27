@@ -84,102 +84,6 @@ const KeyboardActivity = struct {
     }
 };
 
-const LedMatrixActivity = struct {
-    scan_lines: [3]u32,
-    scan_lines_index: u32,
-    scan_timer: TimeKeeper,
-
-    fn drawZigIcon(self: *LedMatrixActivity) void {
-        self.setPixel(0, 0, 1);
-        self.setPixel(1, 0, 1);
-        self.setPixel(2, 0, 1);
-        self.setPixel(3, 0, 1);
-        self.setPixel(4, 0, 1);
-        self.setPixel(3, 1, 1);
-        self.setPixel(2, 2, 1);
-        self.setPixel(1, 3, 1);
-        self.setPixel(0, 4, 1);
-        self.setPixel(1, 4, 1);
-        self.setPixel(2, 4, 1);
-        self.setPixel(3, 4, 1);
-        self.setPixel(4, 4, 1);
-    }
-
-    fn prepare(self: *LedMatrixActivity) void {
-        Gpio.registers.direction_set = LedMatrixActivity.all_led_pins_mask;
-        for (self.scan_lines) |_, i| {
-            self.scan_lines[i] = LedMatrixActivity.row_1 << @truncate(u5, i) | LedMatrixActivity.all_led_cols_mask;
-        }
-        self.scan_lines_index = 0;
-        led_matrix_activity.drawZigIcon();
-        self.scan_timer.prepare(5 * 1000);
-    }
-
-    fn setPixel(self: *LedMatrixActivity, x: u32, y: u32, v: u32) void {
-        const n = 5 * y + x;
-        const full_mask = led_pins_masks[n];
-        const col_mask = full_mask & LedMatrixActivity.all_led_cols_mask;
-        const row_mask = full_mask & LedMatrixActivity.all_led_rows_mask;
-        const selected_scan_line_index = if (row_mask == LedMatrixActivity.row_1) @as(u32, 0) else if (row_mask == LedMatrixActivity.row_2) @as(u32, 1) else 2;
-        self.scan_lines[selected_scan_line_index] = self.scan_lines[selected_scan_line_index] & ~col_mask | if (v == 0) col_mask else 0;
-    }
-
-    fn update(self: *LedMatrixActivity) void {
-        if (self.scan_timer.isFinished()) {
-            self.scan_timer.reset();
-            Gpio.registers.out = Gpio.registers.out & ~LedMatrixActivity.all_led_pins_mask | self.scan_lines[self.scan_lines_index];
-            self.scan_lines_index = (self.scan_lines_index + 1) % self.scan_lines.len;
-        }
-    }
-
-    const all_led_rows_mask: u32 = 0xe000;
-    const all_led_cols_mask: u32 = 0x1ff0;
-    const all_led_pins_mask = LedMatrixActivity.all_led_rows_mask | LedMatrixActivity.all_led_cols_mask;
-    const col_1 = 0x0010;
-    const col_2 = 0x0020;
-    const col_3 = 0x0040;
-    const col_4 = 0x0080;
-    const col_5 = 0x0100;
-    const col_6 = 0x0200;
-    const col_7 = 0x0400;
-    const col_8 = 0x0800;
-    const col_9 = 0x1000;
-    const led_pins_masks = [_]u32{
-        LedMatrixActivity.row_1 | LedMatrixActivity.col_1,
-        LedMatrixActivity.row_2 | LedMatrixActivity.col_4,
-        LedMatrixActivity.row_1 | LedMatrixActivity.col_2,
-        LedMatrixActivity.row_2 | LedMatrixActivity.col_5,
-        LedMatrixActivity.row_1 | LedMatrixActivity.col_3,
-
-        LedMatrixActivity.row_3 | LedMatrixActivity.col_4,
-        LedMatrixActivity.row_3 | LedMatrixActivity.col_5,
-        LedMatrixActivity.row_3 | LedMatrixActivity.col_6,
-        LedMatrixActivity.row_3 | LedMatrixActivity.col_7,
-        LedMatrixActivity.row_3 | LedMatrixActivity.col_8,
-
-        LedMatrixActivity.row_2 | LedMatrixActivity.col_2,
-        LedMatrixActivity.row_1 | LedMatrixActivity.col_9,
-        LedMatrixActivity.row_2 | LedMatrixActivity.col_3,
-        LedMatrixActivity.row_3 | LedMatrixActivity.col_9,
-        LedMatrixActivity.row_2 | LedMatrixActivity.col_1,
-
-        LedMatrixActivity.row_1 | LedMatrixActivity.col_8,
-        LedMatrixActivity.row_1 | LedMatrixActivity.col_7,
-        LedMatrixActivity.row_1 | LedMatrixActivity.col_6,
-        LedMatrixActivity.row_1 | LedMatrixActivity.col_5,
-        LedMatrixActivity.row_1 | LedMatrixActivity.col_4,
-
-        LedMatrixActivity.row_3 | LedMatrixActivity.col_3,
-        LedMatrixActivity.row_2 | LedMatrixActivity.col_7,
-        LedMatrixActivity.row_3 | LedMatrixActivity.col_1,
-        LedMatrixActivity.row_2 | LedMatrixActivity.col_6,
-        LedMatrixActivity.row_3 | LedMatrixActivity.col_2,
-    };
-    const row_1: u32 = 0x2000;
-    const row_2 = 0x4000;
-    const row_3 = 0x8000;
-};
-
 const StatusActivity = struct {
     prev_now: u32,
 
@@ -189,8 +93,6 @@ const StatusActivity = struct {
     }
 
     fn redraw(self: *StatusActivity) void {
-        lib.Terminal.move(999, 999);
-        // Terminal.reportCursorPosition();
         Terminal.clearScreen();
         Terminal.setScrollingRegion(5, 99);
         Terminal.move(5 - 1, 1);
@@ -305,6 +207,7 @@ const builtin = @import("builtin");
 const ClockManagement = lib.ClockManagement;
 const Exceptions = lib.Exceptions;
 const Gpio = lib.Gpio;
+const LedMatrixActivity = lib.LedMatrixActivity;
 const lib = @import("lib00_basics.zig");
 const literal = Uart.literal;
 const log = Uart.log;

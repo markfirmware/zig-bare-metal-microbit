@@ -71,11 +71,13 @@ pub const Gpio = struct {
     pub const registers_masks = struct {
         pub const button_a_active_low: u32 = 1 << 17;
         pub const button_b_active_low: u32 = 1 << 26;
+        pub const nine_led_column_selectors_active_low: u32 = 0x1ff << 4;
         pub const ring0: u32 = 1 << 3;
         pub const ring1: u32 = 1 << 2;
         pub const ring2: u32 = 1 << 1;
         pub const three_led_row_drivers: u32 = 0x7 << 13;
-        pub const nine_led_column_selectors_active_low: u32 = 0x1ff << 4;
+        pub const uart_rx = 1 << 25;
+        pub const uart_tx = 1 << 24;
     };
 };
 
@@ -92,11 +94,13 @@ pub const Gpiote = struct {
 };
 
 pub const LedMatrixActivity = struct {
+    image: u32,
     scan_lines: [3]u32,
     scan_lines_index: u32,
     scan_timer: TimeKeeper,
 
     fn prepare(self: *LedMatrixActivity) void {
+        self.image = 0;
         Gpio.registers.direction_set = Gpio.registers_masks.three_led_row_drivers | Gpio.registers_masks.nine_led_column_selectors_active_low;
         for (self.scan_lines) |*scan_line| {
             scan_line.* = 0;
@@ -111,23 +115,15 @@ pub const LedMatrixActivity = struct {
     }
 
     fn putImage(self: *LedMatrixActivity, image: u32) void {
+        self.image = image;
         var mask: u32 = 0x1;
-        var y: u32 = 4;
-        while (true) {
-            var x: u32 = 4;
-            while (true) {
-                const v: u32 = if (image & mask != 0) 1 else 0;
-                self.putPixel(x, y, v);
+        var y: i32 = 4;
+        while (y >= 0) : (y -= 1) {
+            var x: i32 = 4;
+            while (x >= 0) : (x -= 1) {
+                self.putPixel(@intCast(u32, x), @intCast(u32, y), if (image & mask != 0) @as(u32, 1) else 0);
                 mask <<= 1;
-                if (x == 0) {
-                    break;
-                }
-                x -= 1;
             }
-            if (y == 0) {
-                break;
-            }
-            y -= 1;
         }
     }
 
@@ -249,6 +245,10 @@ pub const Rng = struct {
 };
 
 pub const Terminal = struct {
+    pub fn attribute(n: u32) void {
+        pair(n, 0, "m");
+    }
+
     pub fn clearScreen() void {
         pair(2, 0, "J");
     }
@@ -280,7 +280,7 @@ pub const Terminal = struct {
     }
 
     pub fn reportCursorPosition() void {
-        Uart.writeText("{}", .{csi ++ "6n"});
+        Uart.writeText(csi ++ "6n");
     }
 
     pub fn restoreCursor() void {
@@ -307,7 +307,7 @@ pub const TimeKeeper = struct {
     start_time: u32,
 
     fn capture(self: *TimeKeeper) u32 {
-        Timer0.capture_tasks.capture0 = 1;
+        Timer0.capture_tasks[0] = 1;
         return Timer0.capture_compare_registers[0];
     }
 
@@ -325,14 +325,10 @@ pub const TimeKeeper = struct {
     }
 };
 
-pub const Timer0 = TimerInstance(0x40008000);
-pub const Timer1 = TimerInstance(0x40009000);
-pub const Timer2 = TimerInstance(0x4000a000);
-
 pub fn TimerInstance(instance_address: u32) type {
     return struct {
         pub fn capture() u32 {
-            capture_tasks.capture0 = 1;
+            capture_tasks[0] = 1;
             return capture_compare_registers[0];
         }
 
@@ -345,23 +341,21 @@ pub fn TimerInstance(instance_address: u32) type {
 
         pub const capture_compare_registers = io(instance_address + 0x540, [4]u32);
 
+        pub const capture_tasks = io(instance_address + 0x040, [4]u32);
+
         pub const events = struct {
             pub const compare = io(instance_address + 0x140, [4]u32);
         };
-
-        pub const short_cuts = io(instance_address + 0x200, struct {
-            shorts: u32,
-        });
-
-        pub const capture_tasks = io(instance_address + 0x040, struct {
-            capture0: u32,
-        });
 
         pub const registers = io(instance_address + 0x504, struct {
             mode: u32,
             bit_mode: u32,
             unused0x50c: u32,
             prescaler: u32,
+        });
+
+        pub const short_cuts = io(instance_address + 0x200, struct {
+            shorts: u32,
         });
 
         pub const tasks = io(instance_address + 0x000, struct {
@@ -386,11 +380,9 @@ pub const Uart = struct {
     }
 
     pub fn prepare() void {
-        const uart_rx_pin = 25;
-        const uart_tx_pin = 24;
-        Gpio.registers.direction_set = 1 << uart_tx_pin;
-        registers.pin_select_rxd = uart_rx_pin;
-        registers.pin_select_txd = uart_tx_pin;
+        Gpio.registers.direction_set = Gpio.registers_masks.uart_tx;
+        registers.pin_select_rxd = @ctz(u32, Gpio.registers_masks.uart_rx);
+        registers.pin_select_txd = @ctz(u32, Gpio.registers_masks.uart_tx);
         registers.enable = 0x04;
         tasks.start_rx = 1;
         tasks.start_tx = 1;
@@ -529,6 +521,10 @@ const std = @import("std");
 
 extern var __bss_start: u8;
 extern var __bss_end: u8;
+
+pub const Timer0 = TimerInstance(0x40008000);
+pub const Timer1 = TimerInstance(0x40009000);
+pub const Timer2 = TimerInstance(0x4000a000);
 
 var already_panicking: bool = undefined;
 var uart_singleton: Uart = undefined;

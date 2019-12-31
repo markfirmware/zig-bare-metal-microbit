@@ -9,6 +9,7 @@ export fn mission02_main() noreturn {
     cycle_activity.prepare();
     keyboard_activity.prepare();
     led_matrix_activity.prepare();
+    led_simulator_activity.prepare();
     local_button_activity.prepare();
     radio_activity.prepare();
     remote_button_activity.prepare();
@@ -18,6 +19,7 @@ export fn mission02_main() noreturn {
         cycle_activity.update();
         keyboard_activity.update();
         led_matrix_activity.update();
+        led_simulator_activity.update();
         local_button_activity.update();
         radio_activity.update();
         remote_button_activity.update();
@@ -123,7 +125,10 @@ const KeyboardActivity = struct {
                 local_button_activity.reset();
                 radio_activity.encodeButtons();
             },
-            12, '-' => {
+            12 => {
+                self.column = 1;
+                led_simulator_activity.history = 0;
+                radio_activity.broadcasters = radio_activity.broadcasters_buf[0..0];
                 status_activity.redraw();
             },
             '\r' => {
@@ -134,6 +139,36 @@ const KeyboardActivity = struct {
                 Uart.writeByteBlocking(byte);
                 self.column += 1;
             },
+        }
+    }
+};
+
+const LedSimulatorActivity = struct {
+    history: u32,
+
+    fn prepare(self: *LedSimulatorActivity) void {
+        self.history = 0;
+    }
+
+    fn update(self: *LedSimulatorActivity) void {
+        if (led_matrix_activity.image != self.history) {
+            Terminal.attribute(33);
+            var mask: u32 = 0x1;
+            var y: i32 = 4;
+            while (y >= 0) : (y -= 1) {
+                var x: i32 = 4;
+                while (x >= 0) : (x -= 1) {
+                    const v = led_matrix_activity.image & mask;
+                    if (v != self.history & mask) {
+                        Terminal.move(@intCast(u32, 4 + y), @intCast(u32, 1 + 2 * x));
+                        Uart.writeText(if (v != 0) "[]" else "  ");
+                    }
+                    mask <<= 1;
+                }
+            }
+            self.history = led_matrix_activity.image;
+            Terminal.attribute(0);
+            restoreInputLine();
         }
     }
 };
@@ -222,7 +257,9 @@ const LocalButtonActivity = struct {
                 } else {
                     self.up_count += 1;
                 }
-                // log("button {} {} {} down {} up", .{ self.index, self.string(), self.down_count, self.up_count });
+                Terminal.attribute(if (self.index == 0) @as(u32, 31) else 32);
+                log("local button {} {}", .{ buttonName(self.index), buttonStateString(self.is_pressed) });
+                Terminal.attribute(0);
                 local_button_activity.updateToggleHistory(self.index);
             }
         }
@@ -479,7 +516,9 @@ const RemoteButtonActivity = struct {
             }
             const broadcaster = &radio_activity.broadcasters[self.broadcaster_index];
             if (broadcaster.getToggledButton()) |*b| {
-                log("button {} {}", .{ buttonName(b.index), buttonStateString(b.is_pressed) });
+                Terminal.attribute(if (b.index == 0) @as(u32, 31) else 32);
+                log("remote button {} {}", .{ buttonName(b.index), buttonStateString(b.is_pressed) });
+                Terminal.attribute(0);
             }
         }
     }
@@ -606,7 +645,7 @@ export fn mission02_exceptionNumber15() noreturn {
 }
 
 fn restoreInputLine() void {
-    Terminal.move(99, keyboard_activity.column);
+    Terminal.move(999, keyboard_activity.column);
 }
 
 const Bss = lib.Bss;
@@ -629,7 +668,7 @@ const Ppi = lib.Ppi;
 const Radio = lib.Radio;
 const release_tag = "0.4";
 const std = @import("std");
-const status_display_lines = 5;
+const status_display_lines = 5 + 5;
 const Terminal = lib.Terminal;
 const TimeKeeper = lib.TimeKeeper;
 const Timer0 = lib.Timer0;
@@ -643,6 +682,7 @@ var cycle_activity: CycleActivity = undefined;
 var gpio: Gpio = undefined;
 var keyboard_activity: KeyboardActivity = undefined;
 var led_matrix_activity: LedMatrixActivity = undefined;
+var led_simulator_activity: LedSimulatorActivity = undefined;
 var local_button_activity: LocalButtonActivity = undefined;
 var radio_activity: RadioActivity = undefined;
 var remote_button_activity: RemoteButtonActivity = undefined;

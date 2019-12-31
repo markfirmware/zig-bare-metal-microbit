@@ -206,7 +206,6 @@ const Bss = lib.Bss;
 const builtin = @import("builtin");
 const ClockManagement = lib.ClockManagement;
 const Exceptions = lib.Exceptions;
-const Gpio = lib.Gpio;
 const LedMatrixActivity = lib.LedMatrixActivity;
 const lib = @import("lib00_basics.zig");
 const literal = Uart.literal;

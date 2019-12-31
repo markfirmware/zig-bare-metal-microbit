@@ -7,11 +7,11 @@ fn turnOnAllLeds() void {
     const gpio_direction_set = @intToPtr(*volatile u32, 0x50000518);
     const gpio_out_clear = @intToPtr(*volatile u32, 0x5000050c);
     const gpio_out_set = @intToPtr(*volatile u32, 0x50000508);
-    const all_led_rows_mask: u32 = 0xe000;
-    const all_led_cols_mask_active_low: u32 = 0x1ff0;
-    gpio_direction_set.* = all_led_rows_mask | all_led_cols_mask_active_low;
-    gpio_out_set.* = all_led_rows_mask;
-    gpio_out_clear.* = all_led_cols_mask_active_low;
+    const all_three_led_anode_pins_active_high: u32 = 0xe000;
+    const all_nine_led_cathode_pins_active_low: u32 = 0x1ff0;
+    gpio_direction_set.* = all_three_led_anode_pins_active_high | all_nine_led_cathode_pins_active_low;
+    gpio_out_set.* = all_three_led_anode_pins_active_high;
+    gpio_out_clear.* = all_nine_led_cathode_pins_active_low;
 }
 
 pub fn panic(message: []const u8, trace: ?*@import("builtin").StackTrace) noreturn {

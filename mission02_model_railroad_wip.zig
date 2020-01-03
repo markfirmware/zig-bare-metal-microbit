@@ -9,7 +9,6 @@ export fn mission02_main() noreturn {
     cycle_activity.prepare();
     keyboard_activity.prepare();
     led_matrix_activity.prepare();
-    led_simulator_activity.prepare();
     local_button_activity.prepare();
     radio_activity.prepare();
     remote_button_activity.prepare();
@@ -19,37 +18,11 @@ export fn mission02_main() noreturn {
         cycle_activity.update();
         keyboard_activity.update();
         led_matrix_activity.update();
-        led_simulator_activity.update();
         local_button_activity.update();
         radio_activity.update();
         remote_button_activity.update();
         status_activity.update();
     }
-}
-
-comptime {
-    asm (
-        \\.section .text.start.mission02
-        \\.globl mission02_vector_table
-        \\.balign 0x80
-        \\mission02_vector_table:
-        \\ .long 0x20004000 - 4 // sp top of 16KB ram
-        \\ .long mission02_main
-        \\ .long mission02_exceptionNumber02
-        \\ .long mission02_exceptionNumber03
-        \\ .long mission02_exceptionNumber04
-        \\ .long mission02_exceptionNumber05
-        \\ .long mission02_exceptionNumber06
-        \\ .long mission02_exceptionNumber07
-        \\ .long mission02_exceptionNumber08
-        \\ .long mission02_exceptionNumber09
-        \\ .long mission02_exceptionNumber10
-        \\ .long mission02_exceptionNumber11
-        \\ .long mission02_exceptionNumber12
-        \\ .long mission02_exceptionNumber13
-        \\ .long mission02_exceptionNumber14
-        \\ .long mission02_exceptionNumber15
-    );
 }
 
 const CycleActivity = struct {
@@ -127,8 +100,8 @@ const KeyboardActivity = struct {
             },
             12 => {
                 self.column = 1;
-                led_simulator_activity.history = 0;
                 radio_activity.broadcasters = radio_activity.broadcasters_buf[0..0];
+                status_activity.prev_led_image = 0;
                 status_activity.redraw();
             },
             '\r' => {
@@ -139,36 +112,6 @@ const KeyboardActivity = struct {
                 Uart.writeByteBlocking(byte);
                 self.column += 1;
             },
-        }
-    }
-};
-
-const LedSimulatorActivity = struct {
-    history: u32,
-
-    fn prepare(self: *LedSimulatorActivity) void {
-        self.history = 0;
-    }
-
-    fn update(self: *LedSimulatorActivity) void {
-        if (led_matrix_activity.image != self.history) {
-            Terminal.attribute(33);
-            var mask: u32 = 0x1;
-            var y: i32 = 4;
-            while (y >= 0) : (y -= 1) {
-                var x: i32 = 4;
-                while (x >= 0) : (x -= 1) {
-                    const v = led_matrix_activity.image & mask;
-                    if (v != self.history & mask) {
-                        Terminal.move(@intCast(u32, 4 + y), @intCast(u32, 1 + 2 * x));
-                        Uart.writeText(if (v != 0) "[]" else "  ");
-                    }
-                    mask <<= 1;
-                }
-            }
-            self.history = led_matrix_activity.image;
-            Terminal.attribute(0);
-            restoreInputLine();
         }
     }
 };
@@ -503,9 +446,11 @@ const RadioActivity = struct {
 
 const RemoteButtonActivity = struct {
     broadcaster_index: u32,
+    throttle: Throttle,
 
     fn prepare(self: *RemoteButtonActivity) void {
         self.broadcaster_index = 0;
+        self.throttle.prepare();
     }
 
     fn update(self: *RemoteButtonActivity) void {
@@ -519,6 +464,19 @@ const RemoteButtonActivity = struct {
                 Terminal.attribute(if (b.index == 0) @as(u32, 31) else 32);
                 log("remote button {} {}", .{ buttonName(b.index), buttonStateString(b.is_pressed) });
                 Terminal.attribute(0);
+                if (b.is_pressed) {
+                    if (b.index == 0 and !broadcaster.buttons_is_pressed[1]) {
+                        if (self.throttle.percent >= 5) {
+                            self.throttle.movePercent(-5);
+                        }
+                    } else if (b.index == 1 and !broadcaster.buttons_is_pressed[0]) {
+                        if (self.throttle.percent <= 95) {
+                            self.throttle.movePercent(5);
+                        }
+                    } else {
+                        self.throttle.setPercent(0);
+                    }
+                }
             }
         }
     }
@@ -533,18 +491,62 @@ const RemoteButtonActivity = struct {
             self.is_pressed = is_pressed;
             return self;
         }
+    };
 
-        fn string(self: *RemoteButton) []const u8 {
-            return if (self.is_pressed) "pressed "[0..] else "released"[0..];
+    const Throttle = struct {
+        pwm_out_of_312: u32,
+        percent: u32,
+
+        fn movePercent(self: *Throttle, delta: i32) void {
+            self.setPercent(@intCast(u32, @intCast(i32, self.percent) + delta));
+        }
+
+        fn prepare(self: *Throttle) void {
+            self.percent = 0;
+            Gpio.config[02] = Gpio.config_masks.output;
+            Gpio.config[03] = Gpio.config_masks.input;
+            Ppi.channels[0].event_end_point = @ptrToInt(&Timer1.events.compare[0]);
+            Ppi.channels[1].event_end_point = @ptrToInt(&Timer1.events.compare[1]);
+            Ppi.channels[0].task_end_point = @ptrToInt(&Gpiote.tasks.out[0]);
+            Ppi.channels[1].task_end_point = @ptrToInt(&Gpiote.tasks.out[0]);
+            Timer1.short_cuts.shorts = 0x002;
+            Timer1.capture_compare_registers[1] = 312;
+        }
+
+        fn setPercent(self: *Throttle, percent: u32) void {
+            if (percent > 100) {
+                panicf("attempted throttle {} exceeds 100 percent", .{percent});
+            }
+            self.percent = percent;
+            Timer1.tasks.stop = 1;
+            Ppi.registers.channel_enable_clear = 0x3;
+            Gpiote.config[0] = Gpiote.config_masks.disable;
+            Gpio.registers.out_clear = Gpio.registers_masks.ring1;
+            self.pwm_out_of_312 = 0;
+            if (percent == 100) {
+                Gpio.registers.out_set = Gpio.registers_masks.ring1;
+            } else if (percent > 0) {
+                self.pwm_out_of_312 = 1000 * (100 - percent) * 312 / (100 * 1000);
+                Timer1.capture_compare_registers[0] = self.pwm_out_of_312;
+                Gpio.registers.out_clear = Gpio.registers_masks.ring1;
+                Gpiote.config[0] = 0x30203;
+                Ppi.registers.channel_enable_set = 0x3;
+                Timer1.tasks.clear = 1;
+                Timer1.tasks.start = 1;
+            }
         }
     };
 };
 
 const StatusActivity = struct {
+    prev_led_image: u32,
     prev_now: u32,
+    pwm_counter: u32,
 
     fn prepare(self: *StatusActivity) void {
+        self.prev_led_image = 0;
         self.prev_now = cycle_activity.up_time_seconds;
+        self.pwm_counter = 0;
         self.redraw();
     }
 
@@ -558,16 +560,40 @@ const StatusActivity = struct {
 
     fn update(self: *StatusActivity) void {
         Uart.update();
+        if (Gpio.registers.in & Gpio.registers_masks.ring0 != 0) {
+            self.pwm_counter += 1;
+        }
         const now = cycle_activity.up_time_seconds;
         if (now >= self.prev_now + 1) {
             Terminal.hideCursor();
             Terminal.move(1, 1);
             Terminal.line("up {:3}s cycle {}us max {}us", .{ cycle_activity.up_time_seconds, cycle_activity.cycle_time, cycle_activity.max_cycle_time });
-            Terminal.line("gpio.in {x:8} .out {x:8}", .{ Gpio.registers.in & ~@as(u32, 0x0300fff0), Gpio.registers.out });
+            Terminal.line("gpio.in {x:8} .out {x:8} throttle {:2}% pwm {:2}% cc0 {} raw {}", .{ Gpio.registers.in & ~@as(u32, 0x0300fff0), Gpio.registers.out, remote_button_activity.throttle.percent, self.pwm_counter * 100 * 1000 / 13800 / 1000, remote_button_activity.throttle.pwm_out_of_312, self.pwm_counter });
             Terminal.line("ble tx {} rx ok {} crc errors {} frequency {} addr type {x} 0x{x}{x}", .{ radio_activity.tx_count, radio_activity.rx_count, radio_activity.crc_error_count, Radio.registers.frequency + 2400, Ficr.radio.device_address_type & 1, Ficr.radio.device_address1 & 0xffff, Ficr.radio.device_address0 });
+
             Terminal.showCursor();
             restoreInputLine();
             self.prev_now = now;
+            self.pwm_counter = 0;
+        } else if (led_matrix_activity.image != self.prev_led_image) {
+            Terminal.hideCursor();
+            Terminal.attribute(33);
+            var mask: u32 = 0x1;
+            var y: i32 = 4;
+            while (y >= 0) : (y -= 1) {
+                var x: i32 = 4;
+                while (x >= 0) : (x -= 1) {
+                    const v = led_matrix_activity.image & mask;
+                    if (v != self.prev_led_image & mask) {
+                        Terminal.move(@intCast(u32, 4 + y), @intCast(u32, 1 + 2 * x));
+                        Uart.writeText(if (v != 0) "[]" else "  ");
+                    }
+                    mask <<= 1;
+                }
+            }
+            self.prev_led_image = led_matrix_activity.image;
+            Terminal.attribute(0);
+            restoreInputLine();
         }
     }
 };
@@ -648,6 +674,31 @@ fn restoreInputLine() void {
     Terminal.move(999, keyboard_activity.column);
 }
 
+comptime {
+    asm (
+        \\.section .text.start.mission02
+        \\.globl mission02_vector_table
+        \\.balign 0x80
+        \\mission02_vector_table:
+        \\ .long 0x20004000 - 4 // sp top of 16KB ram
+        \\ .long mission02_main
+        \\ .long mission02_exceptionNumber02
+        \\ .long mission02_exceptionNumber03
+        \\ .long mission02_exceptionNumber04
+        \\ .long mission02_exceptionNumber05
+        \\ .long mission02_exceptionNumber06
+        \\ .long mission02_exceptionNumber07
+        \\ .long mission02_exceptionNumber08
+        \\ .long mission02_exceptionNumber09
+        \\ .long mission02_exceptionNumber10
+        \\ .long mission02_exceptionNumber11
+        \\ .long mission02_exceptionNumber12
+        \\ .long mission02_exceptionNumber13
+        \\ .long mission02_exceptionNumber14
+        \\ .long mission02_exceptionNumber15
+    );
+}
+
 const Bss = lib.Bss;
 const broadcasters_max_len = 40;
 const builtin = @import("builtin");
@@ -661,12 +712,9 @@ const log = Uart.log;
 const math = std.math;
 const mem = std.mem;
 const LedMatrixActivity = lib.LedMatrixActivity;
-const Mission = @import("mission.zig").Mission;
-const name = "zig-bare-metal-microbit";
 const panicf = lib.panicf;
 const Ppi = lib.Ppi;
 const Radio = lib.Radio;
-const release_tag = "0.4";
 const std = @import("std");
 const status_display_lines = 5 + 5;
 const Terminal = lib.Terminal;
@@ -682,7 +730,6 @@ var cycle_activity: CycleActivity = undefined;
 var gpio: Gpio = undefined;
 var keyboard_activity: KeyboardActivity = undefined;
 var led_matrix_activity: LedMatrixActivity = undefined;
-var led_simulator_activity: LedSimulatorActivity = undefined;
 var local_button_activity: LocalButtonActivity = undefined;
 var radio_activity: RadioActivity = undefined;
 var remote_button_activity: RemoteButtonActivity = undefined;

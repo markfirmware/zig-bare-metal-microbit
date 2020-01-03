@@ -95,12 +95,22 @@ pub const Gpiote = struct {
 
 pub const LedMatrixActivity = struct {
     image: u32,
+    max_elapsed: u32,
     scan_lines: [3]u32,
     scan_lines_index: u32,
     scan_timer: TimeKeeper,
 
-    fn prepare(self: *LedMatrixActivity) void {
+    pub fn currentImage(self: *LedMatrixActivity) u32 {
+        return self.image;
+    }
+
+    pub fn maxElapsed(self: *LedMatrixActivity) u32 {
+        return self.max_elapsed;
+    }
+
+    pub fn prepare(self: *LedMatrixActivity) void {
         self.image = 0;
+        self.max_elapsed = 0;
         Gpio.registers.direction_set = Gpio.registers_masks.three_led_row_drivers | Gpio.registers_masks.nine_led_column_selectors_active_low;
         for (self.scan_lines) |*scan_line| {
             scan_line.* = 0;
@@ -134,8 +144,12 @@ pub const LedMatrixActivity = struct {
         self.scan_lines[selected_scan_line_index] = self.scan_lines[selected_scan_line_index] & ~col_mask | v * col_mask;
     }
 
-    fn update(self: *LedMatrixActivity) void {
+    pub fn update(self: *LedMatrixActivity) void {
         if (self.scan_timer.isFinished()) {
+            const elapsed = self.scan_timer.elapsed();
+            if (elapsed > self.max_elapsed) {
+                self.max_elapsed = elapsed;
+            }
             self.scan_timer.reset();
             const keep = Gpio.registers.out & ~(Gpio.registers_masks.three_led_row_drivers | Gpio.registers_masks.nine_led_column_selectors_active_low);
             const row_pins = @as(u32, 0x2000) << @truncate(u5, self.scan_lines_index);
@@ -145,13 +159,22 @@ pub const LedMatrixActivity = struct {
         }
     }
 
-    fn getImage(self: LedMatrixActivity, byte: u8) u32 {
+    fn getImage(self: *LedMatrixActivity, byte: u8) u32 {
         return switch (byte) {
+            ' ' => 0b0000000000000000000000000,
+            '0' => 0b1111110001100011000111111,
+            '1' => 0b0010001100001000010001110,
             '2' => 0b0111010001001100100001111,
+            '3' => 0b1111100001011110000111111,
+            '4' => 0b1000110001111110000100001,
+            '5' => 0b1111110000111110000111111,
+            '6' => 0b1111110000111111000111111,
+            '7' => 0b1111100010001000100010000,
+            '8' => 0b1111110001111111000111111,
+            '9' => 0b1111110001111110000100001,
             'A' => 0b0111010001111111000110001,
             'B' => 0b1111010001111111000111110,
             'Z' => 0b1111100010001000100011111,
-            ' ' => 0b0000000000000000000000000,
             else => 0b0000000000001000000000000,
         };
     }
@@ -311,13 +334,17 @@ pub const TimeKeeper = struct {
         return Timer0.capture_compare_registers[0];
     }
 
+    fn elapsed(self: *TimeKeeper) u32 {
+        return self.capture() -% self.start_time;
+    }
+
     fn prepare(self: *TimeKeeper, duration: u32) void {
         self.duration = duration;
         self.reset();
     }
 
     fn isFinished(self: *TimeKeeper) bool {
-        return self.capture() -% self.start_time >= self.duration;
+        return self.elapsed() >= self.duration;
     }
 
     fn reset(self: *TimeKeeper) void {
@@ -372,6 +399,7 @@ pub const Uart = struct {
     tx_queue: [3]u8,
     tx_queue_read: usize,
     tx_queue_write: usize,
+    updater: ?fn() void,
 
     pub fn drainTxQueue() void {
         while (uart_singleton.tx_queue_read != uart_singleton.tx_queue_write) {
@@ -380,6 +408,7 @@ pub const Uart = struct {
     }
 
     pub fn prepare() void {
+        uart_singleton.updater = null;
         Gpio.registers.direction_set = Gpio.registers_masks.uart_tx;
         registers.pin_select_rxd = @ctz(u32, Gpio.registers_masks.uart_rx);
         registers.pin_select_txd = @ctz(u32, Gpio.registers_masks.uart_tx);
@@ -405,6 +434,9 @@ pub const Uart = struct {
             registers.txd = uart_singleton.tx_queue[uart_singleton.tx_queue_read];
             uart_singleton.tx_queue_read = (uart_singleton.tx_queue_read + 1) % uart_singleton.tx_queue.len;
             uart_singleton.tx_busy = true;
+            if (uart_singleton.updater) |updater| {
+                updater();
+            }
         }
     }
 
@@ -415,6 +447,10 @@ pub const Uart = struct {
     pub fn readByte() u8 {
         events.rx_ready = 0;
         return @truncate(u8, Uart.registers.rxd);
+    }
+
+    pub fn setUpdater(updater: fn() void) void {
+        uart_singleton.updater = updater;
     }
 
     pub fn update() void {
@@ -522,9 +558,11 @@ const std = @import("std");
 extern var __bss_start: u8;
 extern var __bss_end: u8;
 
+pub const ram_u32 = @intToPtr(*[4096]u32, 0x20000000);
 pub const Timer0 = TimerInstance(0x40008000);
 pub const Timer1 = TimerInstance(0x40009000);
 pub const Timer2 = TimerInstance(0x4000a000);
 
 var already_panicking: bool = undefined;
+var led_matrix_activity: LedMatrixActivity = undefined;
 var uart_singleton: Uart = undefined;

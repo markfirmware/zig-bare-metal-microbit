@@ -11,6 +11,9 @@ export fn mission03_main() noreturn {
     status_activity.prepare();
     throttle_activity.prepare();
 
+    status_activity.redraw();
+    throttle_activity.redraw();
+
     Uart.setUpdater(updateLedMatrix);
 
     while (true) {
@@ -101,6 +104,7 @@ const KeyboardActivity = struct {
                 self.column = 1;
                 status_activity.prev_led_image = 0;
                 status_activity.redraw();
+                throttle_activity.redraw();
             },
             '\r' => {
                 Uart.writeText("\n");
@@ -116,24 +120,21 @@ const KeyboardActivity = struct {
 
 const ThrottleActivity = struct {
     buttons: [2]Button,
-    scroller: struct {
-        column: u32,
-        images: []u8,
-        images_buf: [images_len_max]u8,
-        const images_len_max = 4;
-        percent: u32,
-        timer: TimeKeeper,
-    },
+    scroller: Scroller,
     throttle: Throttle,
+
+    fn redraw(self: *ThrottleActivity) void {
+        for (self.buttons) |*b| {
+            b.draw();
+        }
+    }
 
     fn prepare(self: *ThrottleActivity) void {
         self.throttle.prepare();
         for (self.buttons) |*b, i| {
             b.prepare(i);
         }
-        self.scroller.column = 0;
-        self.scroller.images = self.scroller.images_buf[0..0];
-        self.scroller.timer.prepare(200 * 1000);
+        self.scroller.prepare();
         self.update();
     }
 
@@ -141,40 +142,7 @@ const ThrottleActivity = struct {
         for (self.buttons) |*button| {
             button.update();
         }
-        if (self.scroller.timer.isFinished()) {
-            self.scroller.timer.reset();
-            var index = self.scroller.column / 6;
-            if (self.scroller.column % 6 == 0) {
-                if (index == self.scroller.images.len) {
-                    const percent = self.throttle.percent;
-                    if (self.scroller.images.len == 0 or percent != self.scroller.percent) {
-                        self.scroller.percent = percent;
-                        self.scroller.images = self.scroller.images_buf[0..2];
-                        self.scroller.images[0] = ' ';
-                        if (percent < 10) {
-                            self.scroller.images[1] = '0' + @truncate(u8, percent % 10);
-                        } else if (percent < 100) {
-                            self.scroller.images = self.scroller.images_buf[0..3];
-                            self.scroller.images[1] = '0' + @truncate(u8, percent / 10);
-                            self.scroller.images[2] = '0' + @truncate(u8, percent % 10);
-                        } else {
-                            self.scroller.images = self.scroller.images_buf[0..4];
-                            self.scroller.images[1] = '1';
-                            self.scroller.images[2] = '0';
-                            self.scroller.images[3] = '0';
-                        }
-                    } else if (percent == 0) {
-                        return;
-                    }
-                    self.scroller.column = 0;
-                    index = 0;
-                }
-            }
-            const mask: u32 = 0b1111011110111101111011110;
-            const right = if (self.scroller.column % 6 == 0) 0 else led_matrix_activity.getImage(self.scroller.images[index]) >> @truncate(u5, (5 - self.scroller.column % 6));
-            led_matrix_activity.putImage(led_matrix_activity.currentImage() << 1 & mask | (right & ~mask));
-            self.scroller.column += 1;
-        }
+        self.scroller.update();
     }
 
     const Button = struct {
@@ -184,6 +152,24 @@ const ThrottleActivity = struct {
         is_simulation_pressed: bool,
         mask: u32,
         up_count: u32,
+
+        fn draw(self: *Button) void {
+            Terminal.hideCursor();
+            Terminal.move(6, 10 + self.index * 31);
+            if (self.is_pressed) {
+                Terminal.attribute(44);
+                Uart.writeText(self.name());
+                Uart.writeText(" down");
+                Terminal.attribute(0);
+            } else {
+                Uart.writeText(self.name());
+                Uart.writeText("     ");
+            }
+        }
+
+        fn name(self: *Button) []const u8 {
+            return if (self.index == 0) "A" else "B";
+        }
 
         fn prepare(self: *Button, index: u32) void {
             self.down_count = 0;
@@ -209,25 +195,77 @@ const ThrottleActivity = struct {
             const new = Gpio.registers.in & self.mask == 0 or self.is_simulation_pressed;
             if (new != self.is_pressed) {
                 self.is_pressed = new;
+                self.draw();
+                restoreInputLine();
                 if (self.is_pressed) {
                     self.down_count += 1;
                     if (self.index == 0 and !throttle_activity.buttons[1].is_pressed) {
-                        if (throttle_activity.throttle.percent >= 5) {
-                            throttle_activity.throttle.movePercent(-5);
-                        }
+                        throttle_activity.throttle.movePercent("button A pressed", -5);
                     } else if (self.index == 1 and !throttle_activity.buttons[0].is_pressed) {
-                        if (throttle_activity.throttle.percent <= 95) {
-                            throttle_activity.throttle.movePercent(5);
-                        }
+                        throttle_activity.throttle.movePercent("button B pressed", 5);
                     } else {
-                        throttle_activity.throttle.setPercent(0);
+                        throttle_activity.throttle.setPercent("Both buttons A and B pressed (reset throttle to 0%)", 0);
                     }
                 } else {
                     self.up_count += 1;
                 }
-                Terminal.attribute(if (self.index == 0) @as(u32, 31) else 32);
-                log("button {} {}", .{ buttonName(self.index), buttonStateString(self.is_pressed) });
-                Terminal.attribute(0);
+            }
+        }
+    };
+
+    const Scroller = struct {
+        column: u32,
+        text: []u8,
+        text_buf: [text_len_max]u8,
+        const text_len_max = 4;
+        percent: u32,
+        timer: TimeKeeper,
+
+        fn prepare(self: *Scroller) void {
+            self.column = 0;
+            self.text = self.text_buf[0..0];
+            self.timer.prepare(100 * 1000);
+        }
+
+        fn update(self: *Scroller) void {
+            if (self.timer.isFinished()) {
+                self.timer.reset();
+                var index = self.column / 6;
+                if (self.column % 6 == 0) {
+                    if (index == self.text.len) {
+                        const percent = throttle_activity.throttle.percent;
+                        if (self.text.len == 0 or percent != self.percent) {
+                            self.percent = percent;
+                            self.text = self.text_buf[0..2];
+                            self.text[0] = ' ';
+                            if (percent < 10) {
+                                self.text[1] = '0' + @truncate(u8, percent % 10);
+                            } else if (percent < 100) {
+                                self.text = self.text_buf[0..3];
+                                self.text[1] = '0' + @truncate(u8, percent / 10);
+                                self.text[2] = '0' + @truncate(u8, percent % 10);
+                            } else {
+                                self.text = self.text_buf[0..4];
+                                self.text[1] = '1';
+                                self.text[2] = '0';
+                                self.text[3] = '0';
+                            }
+                            if (percent == 0) {
+                                log("scrolling '0' just once", .{});
+                            } else {
+                                log("scrolling '{}' repeatedly", .{self.text});
+                            }
+                        } else if (percent == 0) {
+                            return;
+                        }
+                        self.column = 0;
+                        index = 0;
+                    }
+                }
+                const mask: u32 = 0b1111011110111101111011110;
+                const right = if (self.column % 6 == 0) 0 else led_matrix_activity.getImage(self.text[index]) >> @truncate(u5, (5 - self.column % 6));
+                led_matrix_activity.putImage(led_matrix_activity.currentImage() << 1 & mask | (right & ~mask));
+                self.column += 1;
             }
         }
     };
@@ -236,8 +274,8 @@ const ThrottleActivity = struct {
         pwm_out_of_312: u32,
         percent: u32,
 
-        fn movePercent(self: *Throttle, delta: i32) void {
-            self.setPercent(@intCast(u32, @intCast(i32, self.percent) + delta));
+        fn movePercent(self: *Throttle, message: []const u8, delta: i32) void {
+            self.setPercent(message, @intCast(i32, self.percent) + delta);
         }
 
         fn prepare(self: *Throttle) void {
@@ -252,9 +290,12 @@ const ThrottleActivity = struct {
             Timer1.capture_compare_registers[1] = 312;
         }
 
-        fn setPercent(self: *Throttle, percent: u32) void {
-            if (percent > 100) {
-                panicf("attempted throttle {} exceeds 100 percent", .{percent});
+        fn setPercent(self: *Throttle, message: []const u8, new: i32) void {
+            const percent = @intCast(u32, math.min(math.max(new, 0), 100));
+            if (percent != self.percent) {
+                log("{}: throttle changed from {} to {}", .{ message, self.percent, percent });
+            } else {
+                log("{}: throttle remains at {}%", .{ message, self.percent });
             }
             self.percent = percent;
             Timer1.tasks.stop = 1;
@@ -286,7 +327,6 @@ const StatusActivity = struct {
         self.prev_led_image = 0;
         self.prev_now = cycle_activity.up_time_seconds;
         self.pwm_counter = 0;
-        self.redraw();
     }
 
     fn redraw(self: *StatusActivity) void {
@@ -307,7 +347,7 @@ const StatusActivity = struct {
             Terminal.hideCursor();
             Terminal.move(1, 1);
             Terminal.line("up {:3}s cycle {}Hz {}us max {}us led max {}us", .{ cycle_activity.up_time_seconds, cycle_activity.cycles_per_second, cycle_activity.cycle_time, cycle_activity.max_cycle_time, led_matrix_activity.maxElapsed() });
-            Terminal.line("gpio.in {x:8} .out {x:8} throttle {:2}% pwm {:2}% cc0 {} raw {}", .{ Gpio.registers.in & ~@as(u32, 0x0300fff0), Gpio.registers.out, throttle_activity.throttle.percent, self.pwm_counter * 100 * 1000 / cycle_activity.cycles_per_second / 1000, throttle_activity.throttle.pwm_out_of_312, self.pwm_counter });
+            Terminal.line("throttle {:2}% pwm {:2}% cc0 {} raw {}", .{ throttle_activity.throttle.percent, self.pwm_counter * 100 * 1000 / cycle_activity.cycles_per_second / 1000, throttle_activity.throttle.pwm_out_of_312, self.pwm_counter });
             Terminal.showCursor();
             restoreInputLine();
             self.prev_now = now;
@@ -322,7 +362,7 @@ const StatusActivity = struct {
                 while (x >= 0) : (x -= 1) {
                     const v = led_matrix_activity.currentImage() & mask;
                     if (v != self.prev_led_image & mask) {
-                        Terminal.move(@intCast(u32, 4 + y), @intCast(u32, 1 + 2 * x));
+                        Terminal.move(@intCast(u32, 4 + y), @intCast(u32, 21 + 2 * x));
                         Uart.writeText(if (v != 0) "[]" else "  ");
                     }
                     mask <<= 1;
@@ -334,14 +374,6 @@ const StatusActivity = struct {
         }
     }
 };
-
-fn buttonName(index: u32) []const u8 {
-    return if (index == 0) "A" else "B";
-}
-
-fn buttonStateString(is_pressed: bool) []const u8 {
-    return if (is_pressed) "pressed "[0..] else "released"[0..];
-}
 
 fn exceptionHandler(exception_number: u32) noreturn {
     panicf("exception number {} ... now idle in arm exception handler", .{exception_number});
@@ -453,7 +485,7 @@ const LedMatrixActivity = lib.LedMatrixActivity;
 const panicf = lib.panicf;
 const Ppi = lib.Ppi;
 const std = @import("std");
-const status_display_lines = 5 + 5;
+const status_display_lines = 6 + 5;
 const Terminal = lib.Terminal;
 const TimeKeeper = lib.TimeKeeper;
 const Timer0 = lib.Timer0;

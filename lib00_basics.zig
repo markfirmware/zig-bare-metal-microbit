@@ -117,7 +117,7 @@ pub const LedMatrixActivity = struct {
         }
         self.scan_lines_index = 0;
         self.putChar('Z');
-        self.scan_timer.prepare(5 * 1000);
+        self.scan_timer.prepare(3 * 1000);
     }
 
     fn putChar(self: *LedMatrixActivity, byte: u8) void {
@@ -164,12 +164,12 @@ pub const LedMatrixActivity = struct {
             ' ' => 0b0000000000000000000000000,
             '0' => 0b1111110001100011000111111,
             '1' => 0b0010001100001000010001110,
-            '2' => 0b0111010001001100100001111,
-            '3' => 0b1111100001011110000111111,
+            '2' => 0b1111100001111111000011111,
+            '3' => 0b1111100001001110000111111,
             '4' => 0b1000110001111110000100001,
             '5' => 0b1111110000111110000111111,
             '6' => 0b1111110000111111000111111,
-            '7' => 0b1111100010001000100010000,
+            '7' => 0b1111100001000100010001000,
             '8' => 0b1111110001111111000111111,
             '9' => 0b1111110001111110000100001,
             'A' => 0b0111010001111111000110001,
@@ -399,7 +399,7 @@ pub const Uart = struct {
     tx_queue: [3]u8,
     tx_queue_read: usize,
     tx_queue_write: usize,
-    updater: ?fn() void,
+    updater: ?fn () void,
 
     pub fn drainTxQueue() void {
         while (uart_singleton.tx_queue_read != uart_singleton.tx_queue_write) {
@@ -449,7 +449,7 @@ pub const Uart = struct {
         return @truncate(u8, Uart.registers.rxd);
     }
 
-    pub fn setUpdater(updater: fn() void) void {
+    pub fn setUpdater(updater: fn () void) void {
         uart_singleton.updater = updater;
     }
 
@@ -522,9 +522,7 @@ pub fn exceptionHandler(exception_number: u32) noreturn {
 pub fn hangf(comptime format: []const u8, args: var) noreturn {
     log(format, args);
     Uart.drainTxQueue();
-    while (true) {
-        asm volatile ("wfe");
-    }
+    while (true) {}
 }
 
 pub fn io(address: u32, comptime StructType: type) *volatile StructType {

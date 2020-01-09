@@ -29,9 +29,15 @@ pub const ClockManagement = struct {
 };
 
 pub const Exceptions = struct {
+    var already_panicking: bool = undefined;
+
     pub fn prepare() void {
         already_panicking = false;
     }
+
+    pub fn handle(exception_number: u32) noreturn {
+        panicf("exception number {} ... now idle in arm exception handler", .{exception_number});
+}
 };
 
 pub const Ficr = struct {
@@ -93,73 +99,73 @@ pub const Gpiote = struct {
     };
 };
 
-pub const LedMatrixActivity = struct {
-    image: u32,
-    max_elapsed: u32,
-    scan_lines: [3]u32,
-    scan_lines_index: u32,
-    scan_timer: TimeKeeper,
+pub const LedMatrix = struct {
+    var image: u32 = undefined;
+    var max_elapsed: u32 = undefined;
+    var scan_lines: [3]u32 = undefined;
+    var scan_lines_index: u32 = undefined;
+    var scan_timer: TimeKeeper = undefined;
 
-    pub fn currentImage(self: *LedMatrixActivity) u32 {
-        return self.image;
+    pub fn currentImage() u32 {
+        return image;
     }
 
-    pub fn maxElapsed(self: *LedMatrixActivity) u32 {
-        return self.max_elapsed;
+    pub fn maxElapsed() u32 {
+        return max_elapsed;
     }
 
-    pub fn prepare(self: *LedMatrixActivity) void {
-        self.image = 0;
-        self.max_elapsed = 0;
+    pub fn prepare() void {
+        image = 0;
+        max_elapsed = 0;
         Gpio.registers.direction_set = Gpio.registers_masks.three_led_anodes | Gpio.registers_masks.nine_led_cathodes_active_low;
-        for (self.scan_lines) |*scan_line| {
+        for (scan_lines) |*scan_line| {
             scan_line.* = 0;
         }
-        self.scan_lines_index = 0;
-        self.putChar('Z');
-        self.scan_timer.prepare(3 * 1000);
+        scan_lines_index = 0;
+        putChar('Z');
+        scan_timer.prepare(3 * 1000);
     }
 
-    fn putChar(self: *LedMatrixActivity, byte: u8) void {
-        self.putImage(self.getImage(byte));
+    pub fn putChar(byte: u8) void {
+        putImage(getImage(byte));
     }
 
-    fn putImage(self: *LedMatrixActivity, image: u32) void {
-        self.image = image;
+    pub fn putImage(new_image: u32) void {
+        image = new_image;
         var mask: u32 = 0x1;
         var y: i32 = 4;
         while (y >= 0) : (y -= 1) {
             var x: i32 = 4;
             while (x >= 0) : (x -= 1) {
-                self.putPixel(@intCast(u32, x), @intCast(u32, y), if (image & mask != 0) @as(u32, 1) else 0);
+                putPixel(@intCast(u32, x), @intCast(u32, y), if (image & mask != 0) @as(u32, 1) else 0);
                 mask <<= 1;
             }
         }
     }
 
-    fn putPixel(self: *LedMatrixActivity, x: u32, y: u32, v: u32) void {
+    fn putPixel(x: u32, y: u32, v: u32) void {
         const anode_number_and_cathode_number  = Gpio.led_anode_number_and_cathode_number_indexed_by_y_then_x[y][x];
         const selected_scan_line_index = anode_number_and_cathode_number[0] - 1;
         const col_mask = @as(u32, 0x10) << @truncate(u5, anode_number_and_cathode_number[1] - 1);
-        self.scan_lines[selected_scan_line_index] = self.scan_lines[selected_scan_line_index] & ~col_mask | v * col_mask;
+        scan_lines[selected_scan_line_index] = scan_lines[selected_scan_line_index] & ~col_mask | v * col_mask;
     }
 
-    pub fn update(self: *LedMatrixActivity) void {
-        if (self.scan_timer.isFinished()) {
-            const elapsed = self.scan_timer.elapsed();
-            if (elapsed > self.max_elapsed) {
-                self.max_elapsed = elapsed;
+    pub fn update() void {
+        if (scan_timer.isFinished()) {
+            const elapsed = scan_timer.elapsed();
+            if (elapsed > max_elapsed) {
+                max_elapsed = elapsed;
             }
-            self.scan_timer.reset();
+            scan_timer.reset();
             const keep = Gpio.registers.out & ~(Gpio.registers_masks.three_led_anodes | Gpio.registers_masks.nine_led_cathodes_active_low);
-            const row_pins = @as(u32, 0x2000) << @truncate(u5, self.scan_lines_index);
-            const col_pins = ~self.scan_lines[self.scan_lines_index] & Gpio.registers_masks.nine_led_cathodes_active_low;
+            const row_pins = @as(u32, 0x2000) << @truncate(u5, scan_lines_index);
+            const col_pins = ~scan_lines[scan_lines_index] & Gpio.registers_masks.nine_led_cathodes_active_low;
             Gpio.registers.out = keep | row_pins | col_pins;
-            self.scan_lines_index = (self.scan_lines_index + 1) % self.scan_lines.len;
+            scan_lines_index = (scan_lines_index + 1) % scan_lines.len;
         }
     }
 
-    fn getImage(self: *LedMatrixActivity, byte: u8) u32 {
+    pub fn getImage(byte: u8) u32 {
         return switch (byte) {
             ' ' => 0b0000000000000000000000000,
             '0' => 0b1111110001100011000111111,
@@ -520,10 +526,6 @@ pub const Uart = struct {
     });
 };
 
-pub fn exceptionHandler(exception_number: u32) noreturn {
-    panicf("exception number {} ... now idle in arm exception handler", .{exception_number});
-}
-
 pub fn hangf(comptime format: []const u8, args: var) noreturn {
     log(format, args);
     Uart.drainTxQueue();
@@ -534,16 +536,16 @@ pub fn mmio(address: u32, comptime StructType: type) *volatile StructType {
     return @intToPtr(*volatile StructType, address);
 }
 
-pub fn panic(message: []const u8, trace: ?*builtin.StackTrace) noreturn {
+pub fn lib00_panic(message: []const u8, trace: ?*builtin.StackTrace) noreturn {
     panicf("panic(): {}", .{message});
 }
 
 pub fn panicf(comptime format: []const u8, args: var) noreturn {
     @setCold(true);
-    if (already_panicking) {
+    if (Exceptions.already_panicking) {
         hangf("\npanicked during panic", .{});
     }
-    already_panicking = true;
+    Exceptions.already_panicking = true;
     log("\npanic: " ++ format, args);
     hangf("panic completed", .{});
 }
@@ -552,19 +554,76 @@ fn uart_logBytes(context: void, bytes: []const u8) error{}!void {
     Uart.writeText(bytes);
 }
 
+export fn lib00_exceptionNumber01() noreturn {
+    Exceptions.handle(01);
+}
+
+export fn lib00_exceptionNumber02() noreturn {
+    Exceptions.handle(02);
+}
+
+export fn lib00_exceptionNumber03() noreturn {
+    Exceptions.handle(03);
+}
+
+export fn lib00_exceptionNumber04() noreturn {
+    Exceptions.handle(04);
+}
+
+export fn lib00_exceptionNumber05() noreturn {
+    Exceptions.handle(05);
+}
+
+export fn lib00_exceptionNumber06() noreturn {
+    Exceptions.handle(06);
+}
+
+export fn lib00_exceptionNumber07() noreturn {
+    Exceptions.handle(07);
+}
+
+export fn lib00_exceptionNumber08() noreturn {
+    Exceptions.handle(08);
+}
+
+export fn lib00_exceptionNumber09() noreturn {
+    Exceptions.handle(09);
+}
+
+export fn lib00_exceptionNumber10() noreturn {
+    Exceptions.handle(10);
+}
+
+export fn lib00_exceptionNumber11() noreturn {
+    Exceptions.handle(11);
+}
+
+export fn lib00_exceptionNumber12() noreturn {
+    Exceptions.handle(12);
+}
+
+export fn lib00_exceptionNumber13() noreturn {
+    Exceptions.handle(13);
+}
+
+export fn lib00_exceptionNumber14() noreturn {
+    Exceptions.handle(14);
+}
+
+export fn lib00_exceptionNumber15() noreturn {
+    Exceptions.handle(15);
+}
+
 const builtin = @import("builtin");
 const fmt = std.fmt;
 const literal = Uart.literal;
-const log = Uart.log;
 const std = @import("std");
 
 extern var __bss_start: u8;
 extern var __bss_end: u8;
 
+pub const log = Uart.log;
 pub const ram_u32 = @intToPtr(*volatile [4096]u32, 0x20000000);
 pub const Timer0 = TimerInstance(0x40008000);
 pub const Timer1 = TimerInstance(0x40009000);
 pub const Timer2 = TimerInstance(0x4000a000);
-
-var already_panicking: bool = undefined;
-var led_matrix_activity: LedMatrixActivity = undefined;

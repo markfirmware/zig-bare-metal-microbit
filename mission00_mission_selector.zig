@@ -8,10 +8,10 @@ export fn mission00_main() noreturn {
     Timer0.prepare();
     Timer1.prepare();
     Timer2.prepare();
+    LedMatrix.prepare();
 
     cycle_activity.prepare();
     keyboard_activity.prepare();
-    led_matrix_activity.prepare();
     status_activity.prepare();
 
     missions[0] = .{ .name = "mission selector", .panic = mission00_panic, .vector_table = &mission00_vector_table };
@@ -32,7 +32,6 @@ export fn mission00_main() noreturn {
     while (true) {
         cycle_activity.update();
         keyboard_activity.update();
-        led_matrix_activity.update();
         status_activity.update();
     }
 }
@@ -55,6 +54,7 @@ const CycleActivity = struct {
     }
 
     fn update(self: *CycleActivity) void {
+        LedMatrix.update();
         self.cycle_counter += 1;
         const new_cycle_start = Timer0.capture();
         if (new_cycle_start -% self.last_second_ticks >= 1000 * 1000) {
@@ -274,7 +274,7 @@ const Bss = lib.Bss;
 const builtin = @import("builtin");
 const Exceptions = lib.Exceptions;
 const Gpio = lib.Gpio;
-const LedMatrixActivity = lib.LedMatrixActivity;
+const LedMatrix = lib.LedMatrix;
 const lib = @import("lib00_basics.zig");
 const literal = Uart.literal;
 const log = Uart.log;
@@ -305,6 +305,5 @@ extern var __bss_end: u8;
 
 var cycle_activity: CycleActivity = undefined;
 var keyboard_activity: KeyboardActivity = undefined;
-var led_matrix_activity: LedMatrixActivity = undefined;
 var missions: [10]Mission = undefined;
 var status_activity: StatusActivity = undefined;

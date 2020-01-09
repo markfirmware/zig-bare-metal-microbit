@@ -5,10 +5,10 @@ export fn mission02_main() noreturn {
     Timer0.prepare();
     Timer1.prepare();
     Timer2.prepare();
+    LedMatrix.prepare();
 
     cycle_activity.prepare();
     keyboard_activity.prepare();
-    led_matrix_activity.prepare();
     local_button_activity.prepare();
     radio_activity.prepare();
     remote_button_activity.prepare();
@@ -17,7 +17,6 @@ export fn mission02_main() noreturn {
     while (true) {
         cycle_activity.update();
         keyboard_activity.update();
-        led_matrix_activity.update();
         local_button_activity.update();
         radio_activity.update();
         remote_button_activity.update();
@@ -43,6 +42,7 @@ const CycleActivity = struct {
     }
 
     fn update(self: *CycleActivity) void {
+        LedMatrix.update();
         self.cycle_counter += 1;
         const new_cycle_start = Timer0.capture();
         if (self.up_timer.isFinished()) {
@@ -160,7 +160,7 @@ const LocalButtonActivity = struct {
         }
         const is_pressed = self.buttons[index].is_pressed;
         const letter = if (!self.buttons[0].is_pressed and !self.buttons[1].is_pressed) "Z" else if (!is_pressed) " " else buttonName(index);
-        led_matrix_activity.putChar(letter[0]);
+        LedMatrix.putChar(letter[0]);
     }
 
     const LocalButton = struct {
@@ -573,7 +573,7 @@ const StatusActivity = struct {
             restoreInputLine();
             self.prev_now = now;
             self.pwm_counter = 0;
-        } else if (led_matrix_activity.image != self.prev_led_image) {
+        } else if (LedMatrix.currentImage() != self.prev_led_image) {
             Terminal.hideCursor();
             Terminal.attribute(33);
             var mask: u32 = 0x1;
@@ -581,7 +581,7 @@ const StatusActivity = struct {
             while (y >= 0) : (y -= 1) {
                 var x: i32 = 4;
                 while (x >= 0) : (x -= 1) {
-                    const v = led_matrix_activity.image & mask;
+                    const v = LedMatrix.currentImage() & mask;
                     if (v != self.prev_led_image & mask) {
                         Terminal.move(@intCast(u32, 4 + y), @intCast(u32, 1 + 2 * x));
                         Uart.writeText(if (v != 0) "[]" else "  ");
@@ -589,7 +589,7 @@ const StatusActivity = struct {
                     mask <<= 1;
                 }
             }
-            self.prev_led_image = led_matrix_activity.image;
+            self.prev_led_image = LedMatrix.currentImage();
             Terminal.attribute(0);
             restoreInputLine();
         }
@@ -709,7 +709,7 @@ const literal = Uart.literal;
 const log = Uart.log;
 const math = std.math;
 const mem = std.mem;
-const LedMatrixActivity = lib.LedMatrixActivity;
+const LedMatrix = lib.LedMatrix;
 const panicf = lib.panicf;
 const Ppi = lib.Ppi;
 const Radio = lib.Radio;
@@ -722,12 +722,11 @@ const Timer1 = lib.Timer1;
 const Timer2 = lib.Timer2;
 const Uart = lib.Uart;
 
-pub const panic = lib.panic;
+pub const panic = lib.lib00_panic;
 
 var cycle_activity: CycleActivity = undefined;
 var gpio: Gpio = undefined;
 var keyboard_activity: KeyboardActivity = undefined;
-var led_matrix_activity: LedMatrixActivity = undefined;
 var local_button_activity: LocalButtonActivity = undefined;
 var radio_activity: RadioActivity = undefined;
 var remote_button_activity: RemoteButtonActivity = undefined;

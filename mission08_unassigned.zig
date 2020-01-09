@@ -4,16 +4,15 @@ export fn mission08_main() noreturn {
     Timer0.prepare();
     Timer1.prepare();
     Timer2.prepare();
+    LedMatrix.prepare();
     ClockManagement.prepareHf();
     Uart.prepare();
 
     cycle_activity.prepare();
-    led_matrix_activity.prepare();
     terminal_activity.prepare();
 
     while (true) {
         cycle_activity.update();
-        led_matrix_activity.update();
         terminal_activity.update();
     }
 }
@@ -36,6 +35,7 @@ const CycleActivity = struct {
     }
 
     fn update(self: *CycleActivity) void {
+        LedMatrix.update();
         self.cycle_counter += 1;
         const new_cycle_start = Timer0.capture();
         if (self.last_cycle_start) |start| {
@@ -109,102 +109,29 @@ comptime {
         \\mission08_vector_table:
         \\ .long 0x20004000 // sp top of 16KB ram
         \\ .long mission08_main
-        \\ .long mission08_exceptionNumber02
-        \\ .long mission08_exceptionNumber03
-        \\ .long mission08_exceptionNumber04
-        \\ .long mission08_exceptionNumber05
-        \\ .long mission08_exceptionNumber06
-        \\ .long mission08_exceptionNumber07
-        \\ .long mission08_exceptionNumber08
-        \\ .long mission08_exceptionNumber09
-        \\ .long mission08_exceptionNumber10
-        \\ .long mission08_exceptionNumber11
-        \\ .long mission08_exceptionNumber12
-        \\ .long mission08_exceptionNumber13
-        \\ .long mission08_exceptionNumber14
-        \\ .long mission08_exceptionNumber15
+        \\ .long lib00_exceptionNumber02
+        \\ .long lib00_exceptionNumber03
+        \\ .long lib00_exceptionNumber04
+        \\ .long lib00_exceptionNumber05
+        \\ .long lib00_exceptionNumber06
+        \\ .long lib00_exceptionNumber07
+        \\ .long lib00_exceptionNumber08
+        \\ .long lib00_exceptionNumber09
+        \\ .long lib00_exceptionNumber10
+        \\ .long lib00_exceptionNumber11
+        \\ .long lib00_exceptionNumber12
+        \\ .long lib00_exceptionNumber13
+        \\ .long lib00_exceptionNumber14
+        \\ .long lib00_exceptionNumber15
     );
 }
 
-export fn mission08_exceptionNumber01() noreturn {
-    lib.exceptionHandler(01);
-}
-
-export fn mission08_exceptionNumber02() noreturn {
-    lib.exceptionHandler(02);
-}
-
-export fn mission08_exceptionNumber03() noreturn {
-    lib.exceptionHandler(03);
-}
-
-export fn mission08_exceptionNumber04() noreturn {
-    lib.exceptionHandler(04);
-}
-
-export fn mission08_exceptionNumber05() noreturn {
-    lib.exceptionHandler(05);
-}
-
-export fn mission08_exceptionNumber06() noreturn {
-    lib.exceptionHandler(06);
-}
-
-export fn mission08_exceptionNumber07() noreturn {
-    lib.exceptionHandler(07);
-}
-
-export fn mission08_exceptionNumber08() noreturn {
-    lib.exceptionHandler(08);
-}
-
-export fn mission08_exceptionNumber09() noreturn {
-    lib.exceptionHandler(09);
-}
-
-export fn mission08_exceptionNumber10() noreturn {
-    lib.exceptionHandler(10);
-}
-
-export fn mission08_exceptionNumber11() noreturn {
-    lib.exceptionHandler(11);
-}
-
-export fn mission08_exceptionNumber12() noreturn {
-    lib.exceptionHandler(12);
-}
-
-export fn mission08_exceptionNumber13() noreturn {
-    lib.exceptionHandler(13);
-}
-
-export fn mission08_exceptionNumber14() noreturn {
-    lib.exceptionHandler(14);
-}
-
-export fn mission08_exceptionNumber15() noreturn {
-    lib.exceptionHandler(15);
-}
-
-pub fn panic(message: []const u8, trace: ?*builtin.StackTrace) noreturn {
-    lib.panicf("panic(): {}", .{message});
-}
-
-const Bss = lib.Bss;
 const builtin = @import("builtin");
-const ClockManagement = lib.ClockManagement;
-const Exceptions = lib.Exceptions;
-const LedMatrixActivity = lib.LedMatrixActivity;
-const lib = @import("lib00_basics.zig");
-const log = Uart.log;
 const std = @import("std");
-const Terminal = lib.Terminal;
-const TimeKeeper = lib.TimeKeeper;
-const Timer0 = lib.Timer0;
-const Timer1 = lib.Timer1;
-const Timer2 = lib.Timer2;
-const Uart = lib.Uart;
+
+pub const panic = lib00_panic;
+
+usingnamespace @import("lib00_basics.zig");
 
 var cycle_activity: CycleActivity = undefined;
-var led_matrix_activity: LedMatrixActivity = undefined;
 var terminal_activity: TerminalActivity = undefined;

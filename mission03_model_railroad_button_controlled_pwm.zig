@@ -4,17 +4,16 @@ export fn mission03_main() noreturn {
     Timer0.prepare();
     Timer1.prepare();
     Timer2.prepare();
+    LedMatrix.prepare();
 
     cycle_activity.prepare();
-    led_matrix_activity.prepare();
     terminal_activity.prepare();
     throttle_activity.prepare();
 
-    Uart.setUpdater(updateLedMatrix);
+    Uart.setUpdater(LedMatrix.update);
 
     while (true) {
         cycle_activity.update();
-        led_matrix_activity.update();
         terminal_activity.update();
         throttle_activity.update();
     }
@@ -42,6 +41,7 @@ const CycleActivity = struct {
     }
 
     fn update(self: *CycleActivity) void {
+        LedMatrix.update();
         self.cycle_counter += 1;
         const new_cycle_start = Timer0.capture();
         if (self.up_timer.isFinished()) {
@@ -209,8 +209,8 @@ const ThrottleActivity = struct {
                     }
                 }
                 const mask: u32 = 0b1111011110111101111011110;
-                const right = if (self.column % 6 == 0) 0 else led_matrix_activity.getImage(self.text[index]) >> @truncate(u5, (5 - self.column % 6));
-                led_matrix_activity.putImage(led_matrix_activity.currentImage() << 1 & mask | (right & ~mask));
+                const right = if (self.column % 6 == 0) 0 else LedMatrix.getImage(self.text[index]) >> @truncate(u5, (5 - self.column % 6));
+                LedMatrix.putImage(LedMatrix.currentImage() << 1 & mask | (right & ~mask));
                 self.column += 1;
             }
         }
@@ -332,13 +332,13 @@ const TerminalActivity = struct {
         if (now >= self.prev_now + 1) {
             Terminal.hideCursor();
             Terminal.move(1, 1);
-            Terminal.line("up {:3}s cycle {}Hz {}us max {}us led max {}us", .{ cycle_activity.up_time_seconds, cycle_activity.cycles_per_second, cycle_activity.cycle_time, cycle_activity.max_cycle_time, led_matrix_activity.maxElapsed() });
+            Terminal.line("up {:3}s cycle {}Hz {}us max {}us led max {}us", .{ cycle_activity.up_time_seconds, cycle_activity.cycles_per_second, cycle_activity.cycle_time, cycle_activity.max_cycle_time, LedMatrix.maxElapsed() });
             Terminal.line("throttle {:2}% pwm {:2}% cc0 {} raw {}", .{ throttle_activity.throttle.percent, throttle_activity.pwm_counter * 100 * 1000 / cycle_activity.cycles_per_second / 1000, throttle_activity.throttle.pwm_out_of_312, throttle_activity.pwm_counter });
             Terminal.showCursor();
             restoreInputLine();
             self.prev_now = now;
             throttle_activity.pwm_counter = 0;
-        } else if (led_matrix_activity.currentImage() != self.prev_led_image) {
+        } else if (LedMatrix.currentImage() != self.prev_led_image) {
             Terminal.hideCursor();
             Terminal.attribute(33);
             var mask: u32 = 0x1;
@@ -346,7 +346,7 @@ const TerminalActivity = struct {
             while (y >= 0) : (y -= 1) {
                 var x: i32 = 4;
                 while (x >= 0) : (x -= 1) {
-                    const v = led_matrix_activity.currentImage() & mask;
+                    const v = LedMatrix.currentImage() & mask;
                     if (v != self.prev_led_image & mask) {
                         Terminal.move(@intCast(u32, 4 + y), @intCast(u32, 21 + 2 * x));
                         Uart.writeText(if (v != 0) "[]" else "  ");
@@ -354,7 +354,7 @@ const TerminalActivity = struct {
                     mask <<= 1;
                 }
             }
-            self.prev_led_image = led_matrix_activity.currentImage();
+            self.prev_led_image = LedMatrix.currentImage();
             Terminal.attribute(0);
             restoreInputLine();
         }
@@ -429,10 +429,6 @@ fn restoreInputLine() void {
     Terminal.move(999, terminal_activity.keyboard_column);
 }
 
-fn updateLedMatrix() void {
-    led_matrix_activity.update();
-}
-
 comptime {
     asm (
         \\.section .text.start.mission03
@@ -466,7 +462,7 @@ const lib = @import("lib00_basics.zig");
 const log = Uart.log;
 const math = std.math;
 const mem = std.mem;
-const LedMatrixActivity = lib.LedMatrixActivity;
+const LedMatrix = lib.LedMatrix;
 const panicf = lib.panicf;
 const Ppi = lib.Ppi;
 const std = @import("std");
@@ -478,9 +474,8 @@ const Timer1 = lib.Timer1;
 const Timer2 = lib.Timer2;
 const Uart = lib.Uart;
 
-pub const panic = lib.panic;
+pub const panic = lib.lib00_panic;
 
 var cycle_activity: CycleActivity = undefined;
-var led_matrix_activity: LedMatrixActivity = undefined;
 var terminal_activity: TerminalActivity = undefined;
 var throttle_activity: ThrottleActivity = undefined;

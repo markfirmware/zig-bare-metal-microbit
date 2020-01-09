@@ -8,15 +8,13 @@ export fn mission05_main() noreturn {
     Uart.prepare();
 
     cycle_activity.prepare();
-    keyboard_activity.prepare();
     led_matrix_activity.prepare();
-    status_activity.prepare();
+    terminal_activity.prepare();
 
     while (true) {
         cycle_activity.update();
-        keyboard_activity.update();
         led_matrix_activity.update();
-        status_activity.update();
+        terminal_activity.update();
     }
 }
 
@@ -52,54 +50,44 @@ const CycleActivity = struct {
     }
 };
 
-const KeyboardActivity = struct {
-    column: u32,
-
-    fn prepare(self: *KeyboardActivity) void {
-        self.column = 1;
-    }
-
-    fn update(self: *KeyboardActivity) void {
-        if (!Uart.isReadByteReady()) {
-            return;
-        }
-        const byte = Uart.readByte();
-        switch (byte) {
-            27 => {
-                Uart.writeByteBlocking('$');
-                self.column += 1;
-            },
-            12, '-' => {
-                status_activity.redraw();
-            },
-            '\r' => {
-                Uart.writeText("\n");
-                self.column = 1;
-            },
-            else => {
-                Uart.writeByteBlocking(byte);
-                self.column += 1;
-            },
-        }
-    }
-};
-
-const StatusActivity = struct {
+const TerminalActivity = struct {
+    keyboard_column: u32,
     prev_now: u32,
 
-    fn prepare(self: *StatusActivity) void {
+    fn prepare(self: *TerminalActivity) void {
+        self.keyboard_column = 1;
         self.prev_now = cycle_activity.up_time_seconds;
         self.redraw();
     }
 
-    fn redraw(self: *StatusActivity) void {
+    fn redraw(self: *TerminalActivity) void {
         Terminal.clearScreen();
         Terminal.setScrollingRegion(5, 99);
         Terminal.move(5 - 1, 1);
         log("keyboard input will be echoed below:", .{});
     }
 
-    fn update(self: *StatusActivity) void {
+    fn update(self: *TerminalActivity) void {
+        if (Uart.isReadByteReady()) {
+            const byte = Uart.readByte();
+            switch (byte) {
+                27 => {
+                    Uart.writeByteBlocking('$');
+                    self.keyboard_column += 1;
+                },
+                12 => {
+                    self.redraw();
+                },
+                '\r' => {
+                    Uart.writeText("\n");
+                    self.keyboard_column = 1;
+                },
+                else => {
+                    Uart.writeByteBlocking(byte);
+                    self.keyboard_column += 1;
+                },
+            }
+        }
         Uart.update();
         const now = cycle_activity.up_time_seconds;
         if (now >= self.prev_now + 1) {
@@ -107,7 +95,7 @@ const StatusActivity = struct {
             Terminal.move(1, 1);
             Terminal.line("up {:3}s cycle {}us max {}us", .{ cycle_activity.up_time_seconds, cycle_activity.cycle_time, cycle_activity.max_cycle_time });
             Terminal.showCursor();
-            Terminal.move(99, keyboard_activity.column);
+            Terminal.move(99, self.keyboard_column);
             self.prev_now = now;
         }
     }
@@ -208,7 +196,6 @@ const ClockManagement = lib.ClockManagement;
 const Exceptions = lib.Exceptions;
 const LedMatrixActivity = lib.LedMatrixActivity;
 const lib = @import("lib00_basics.zig");
-const literal = Uart.literal;
 const log = Uart.log;
 const std = @import("std");
 const Terminal = lib.Terminal;
@@ -219,6 +206,5 @@ const Timer2 = lib.Timer2;
 const Uart = lib.Uart;
 
 var cycle_activity: CycleActivity = undefined;
-var keyboard_activity: KeyboardActivity = undefined;
 var led_matrix_activity: LedMatrixActivity = undefined;
-var status_activity: StatusActivity = undefined;
+var terminal_activity: TerminalActivity = undefined;

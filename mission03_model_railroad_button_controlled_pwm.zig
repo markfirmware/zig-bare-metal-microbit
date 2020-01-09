@@ -6,21 +6,16 @@ export fn mission03_main() noreturn {
     Timer2.prepare();
 
     cycle_activity.prepare();
-    keyboard_activity.prepare();
     led_matrix_activity.prepare();
-    status_activity.prepare();
+    terminal_activity.prepare();
     throttle_activity.prepare();
-
-    status_activity.redraw();
-    throttle_activity.redraw();
 
     Uart.setUpdater(updateLedMatrix);
 
     while (true) {
         cycle_activity.update();
-        keyboard_activity.update();
         led_matrix_activity.update();
-        status_activity.update();
+        terminal_activity.update();
         throttle_activity.update();
     }
 }
@@ -63,65 +58,22 @@ const CycleActivity = struct {
     }
 };
 
-const KeyboardActivity = struct {
-    column: u32,
-
-    fn prepare(self: *KeyboardActivity) void {
-        self.column = 1;
-    }
-
-    fn update(self: *KeyboardActivity) void {
-        if (!Uart.isReadByteReady()) {
-            return;
-        }
-        const byte = Uart.readByte();
-        switch (byte) {
-            27 => {
-                Uart.writeByteBlocking('$');
-                self.column += 1;
-            },
-            'a' => {
-                throttle_activity.buttons[0].toggle();
-                throttle_activity.buttons[0].toggle();
-            },
-            'b' => {
-                throttle_activity.buttons[1].toggle();
-                throttle_activity.buttons[1].toggle();
-            },
-            'c' => {
-                throttle_activity.buttons[0].toggle();
-                throttle_activity.buttons[1].toggle();
-                throttle_activity.buttons[0].toggle();
-                throttle_activity.buttons[1].toggle();
-            },
-            'A' => {
-                throttle_activity.buttons[0].toggle();
-            },
-            'B' => {
-                throttle_activity.buttons[1].toggle();
-            },
-            12 => {
-                self.column = 1;
-                status_activity.prev_led_image = 0;
-                status_activity.redraw();
-                throttle_activity.redraw();
-            },
-            '\r' => {
-                Uart.writeText("\n");
-                self.column = 1;
-            },
-            else => {
-                Uart.writeByteBlocking(byte);
-                self.column += 1;
-            },
-        }
-    }
-};
-
 const ThrottleActivity = struct {
     buttons: [2]Button,
-    scroller: Scroller,
+    pwm_counter: u32,
+    led_scroller: LedScroller,
     throttle: Throttle,
+
+    fn prepare(self: *ThrottleActivity) void {
+        self.pwm_counter = 0;
+        self.throttle.prepare();
+        for (self.buttons) |*b, i| {
+            b.prepare(i);
+        }
+        self.led_scroller.prepare();
+        self.redraw();
+        self.update();
+    }
 
     fn redraw(self: *ThrottleActivity) void {
         for (self.buttons) |*b| {
@@ -129,20 +81,14 @@ const ThrottleActivity = struct {
         }
     }
 
-    fn prepare(self: *ThrottleActivity) void {
-        self.throttle.prepare();
-        for (self.buttons) |*b, i| {
-            b.prepare(i);
-        }
-        self.scroller.prepare();
-        self.update();
-    }
-
     fn update(self: *ThrottleActivity) void {
+        if (Gpio.registers.in & Gpio.registers_masks.ring0 != 0) {
+            self.pwm_counter += 1;
+        }
         for (self.buttons) |*button| {
             button.update();
         }
-        self.scroller.update();
+        self.led_scroller.update();
     }
 
     const Button = struct {
@@ -213,7 +159,7 @@ const ThrottleActivity = struct {
         }
     };
 
-    const Scroller = struct {
+    const LedScroller = struct {
         column: u32,
         text: []u8,
         text_buf: [text_len_max]u8,
@@ -221,13 +167,13 @@ const ThrottleActivity = struct {
         percent: u32,
         timer: TimeKeeper,
 
-        fn prepare(self: *Scroller) void {
+        fn prepare(self: *LedScroller) void {
             self.column = 0;
             self.text = self.text_buf[0..0];
             self.timer.prepare(100 * 1000);
         }
 
-        fn update(self: *Scroller) void {
+        fn update(self: *LedScroller) void {
             if (self.timer.isFinished()) {
                 self.timer.reset();
                 var index = self.column / 6;
@@ -282,10 +228,8 @@ const ThrottleActivity = struct {
             self.percent = 0;
             Gpio.config[02] = Gpio.config_masks.output;
             Gpio.config[03] = Gpio.config_masks.input;
-            Ppi.channels[0].event_end_point = @ptrToInt(&Timer1.events.compare[0]);
-            Ppi.channels[1].event_end_point = @ptrToInt(&Timer1.events.compare[1]);
-            Ppi.channels[0].task_end_point = @ptrToInt(&Gpiote.tasks.out[0]);
-            Ppi.channels[1].task_end_point = @ptrToInt(&Gpiote.tasks.out[0]);
+            Ppi.setChannelEventAndTask(0, &Timer1.events.compare[0], &Gpiote.tasks.out[0]);
+            Ppi.setChannelEventAndTask(1, &Timer1.events.compare[1], &Gpiote.tasks.out[0]);
             Timer1.short_cuts.shorts = 0x002;
             Timer1.capture_compare_registers[1] = 312;
         }
@@ -299,7 +243,8 @@ const ThrottleActivity = struct {
             }
             self.percent = percent;
             Timer1.tasks.stop = 1;
-            Ppi.registers.channel_enable_clear = 0x3;
+            const ppi_channels_0_and_1_mask = 1 << 0 | 1 << 1;
+            Ppi.registers.channel_enable_clear = ppi_channels_0_and_1_mask;
             Gpiote.config[0] = Gpiote.config_masks.disable;
             Gpio.registers.out_clear = Gpio.registers_masks.ring1;
             self.pwm_out_of_312 = 0;
@@ -310,7 +255,7 @@ const ThrottleActivity = struct {
                 Timer1.capture_compare_registers[0] = self.pwm_out_of_312;
                 Gpio.registers.out_clear = Gpio.registers_masks.ring1;
                 Gpiote.config[0] = 0x30203;
-                Ppi.registers.channel_enable_set = 0x3;
+                Ppi.registers.channel_enable_set = ppi_channels_0_and_1_mask;
                 Timer1.tasks.clear = 1;
                 Timer1.tasks.start = 1;
             }
@@ -318,18 +263,19 @@ const ThrottleActivity = struct {
     };
 };
 
-const StatusActivity = struct {
+const TerminalActivity = struct {
+    keyboard_column: u32,
     prev_led_image: u32,
     prev_now: u32,
-    pwm_counter: u32,
 
-    fn prepare(self: *StatusActivity) void {
+    fn prepare(self: *TerminalActivity) void {
+        self.keyboard_column = 1;
         self.prev_led_image = 0;
         self.prev_now = cycle_activity.up_time_seconds;
-        self.pwm_counter = 0;
+        self.redraw();
     }
 
-    fn redraw(self: *StatusActivity) void {
+    fn redraw(self: *TerminalActivity) void {
         Terminal.clearScreen();
         Terminal.setScrollingRegion(status_display_lines, 99);
         Terminal.move(status_display_lines - 1, 1);
@@ -337,21 +283,61 @@ const StatusActivity = struct {
         restoreInputLine();
     }
 
-    fn update(self: *StatusActivity) void {
-        Uart.update();
-        if (Gpio.registers.in & Gpio.registers_masks.ring0 != 0) {
-            self.pwm_counter += 1;
+    fn update(self: *TerminalActivity) void {
+        if (Uart.isReadByteReady()) {
+            const byte = Uart.readByte();
+            switch (byte) {
+                27 => {
+                    Uart.writeByteBlocking('$');
+                    self.keyboard_column += 1;
+                },
+                'a' => {
+                    throttle_activity.buttons[0].toggle();
+                    throttle_activity.buttons[0].toggle();
+                },
+                'b' => {
+                    throttle_activity.buttons[1].toggle();
+                    throttle_activity.buttons[1].toggle();
+                },
+                'c' => {
+                    throttle_activity.buttons[0].toggle();
+                    throttle_activity.buttons[1].toggle();
+                    throttle_activity.buttons[0].toggle();
+                    throttle_activity.buttons[1].toggle();
+                },
+                'A' => {
+                    throttle_activity.buttons[0].toggle();
+                },
+                'B' => {
+                    throttle_activity.buttons[1].toggle();
+                },
+                12 => {
+                    self.keyboard_column = 1;
+                    terminal_activity.prev_led_image = 0;
+                    terminal_activity.redraw();
+                    throttle_activity.redraw();
+                },
+                '\r' => {
+                    Uart.writeText("\n");
+                    self.keyboard_column = 1;
+                },
+                else => {
+                    Uart.writeByteBlocking(byte);
+                    self.keyboard_column += 1;
+                },
+            }
         }
+        Uart.update();
         const now = cycle_activity.up_time_seconds;
         if (now >= self.prev_now + 1) {
             Terminal.hideCursor();
             Terminal.move(1, 1);
             Terminal.line("up {:3}s cycle {}Hz {}us max {}us led max {}us", .{ cycle_activity.up_time_seconds, cycle_activity.cycles_per_second, cycle_activity.cycle_time, cycle_activity.max_cycle_time, led_matrix_activity.maxElapsed() });
-            Terminal.line("throttle {:2}% pwm {:2}% cc0 {} raw {}", .{ throttle_activity.throttle.percent, self.pwm_counter * 100 * 1000 / cycle_activity.cycles_per_second / 1000, throttle_activity.throttle.pwm_out_of_312, self.pwm_counter });
+            Terminal.line("throttle {:2}% pwm {:2}% cc0 {} raw {}", .{ throttle_activity.throttle.percent, throttle_activity.pwm_counter * 100 * 1000 / cycle_activity.cycles_per_second / 1000, throttle_activity.throttle.pwm_out_of_312, throttle_activity.pwm_counter });
             Terminal.showCursor();
             restoreInputLine();
             self.prev_now = now;
-            self.pwm_counter = 0;
+            throttle_activity.pwm_counter = 0;
         } else if (led_matrix_activity.currentImage() != self.prev_led_image) {
             Terminal.hideCursor();
             Terminal.attribute(33);
@@ -440,7 +426,7 @@ export fn mission03_exceptionNumber15() noreturn {
 }
 
 fn restoreInputLine() void {
-    Terminal.move(999, keyboard_activity.column);
+    Terminal.move(999, terminal_activity.keyboard_column);
 }
 
 fn updateLedMatrix() void {
@@ -477,7 +463,6 @@ const builtin = @import("builtin");
 const Gpio = lib.Gpio;
 const Gpiote = lib.Gpiote;
 const lib = @import("lib00_basics.zig");
-const literal = Uart.literal;
 const log = Uart.log;
 const math = std.math;
 const mem = std.mem;
@@ -496,8 +481,6 @@ const Uart = lib.Uart;
 pub const panic = lib.panic;
 
 var cycle_activity: CycleActivity = undefined;
-var gpio: Gpio = undefined;
-var keyboard_activity: KeyboardActivity = undefined;
 var led_matrix_activity: LedMatrixActivity = undefined;
-var status_activity: StatusActivity = undefined;
+var terminal_activity: TerminalActivity = undefined;
 var throttle_activity: ThrottleActivity = undefined;

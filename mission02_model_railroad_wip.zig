@@ -505,10 +505,8 @@ const RemoteButtonActivity = struct {
             self.percent = 0;
             Gpio.config[02] = Gpio.config_masks.output;
             Gpio.config[03] = Gpio.config_masks.input;
-            Ppi.channels[0].event_end_point = @ptrToInt(&Timer1.events.compare[0]);
-            Ppi.channels[1].event_end_point = @ptrToInt(&Timer1.events.compare[1]);
-            Ppi.channels[0].task_end_point = @ptrToInt(&Gpiote.tasks.out[0]);
-            Ppi.channels[1].task_end_point = @ptrToInt(&Gpiote.tasks.out[0]);
+            Ppi.setChannelEventAndTask(0, &Timer1.events.compare[0], &Gpiote.tasks.out[0]);
+            Ppi.setChannelEventAndTask(1, &Timer1.events.compare[1], &Gpiote.tasks.out[0]);
             Timer1.short_cuts.shorts = 0x002;
             Timer1.capture_compare_registers[1] = 312;
         }

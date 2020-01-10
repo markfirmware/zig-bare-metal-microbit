@@ -63,7 +63,7 @@ const ThrottleActivity = struct {
     var pwm_loop_back_counter: u32 = undefined;
 
     fn loopBackPercent() u32 {
-        return ThrottleActivity.pwm_loop_back_counter * 100 * 1000 / CycleActivity.cycles_per_second / 1000;
+        return pwm_loop_back_counter * 100 * 1000 / CycleActivity.cycles_per_second / 1000;
     }
 
     fn prepare() void {
@@ -144,15 +144,15 @@ const ThrottleActivity = struct {
             if (new != self.is_pressed) {
                 self.is_pressed = new;
                 self.draw();
-                restoreInputLine();
+                TerminalActivity.restoreInputLine();
                 if (self.is_pressed) {
                     self.down_count += 1;
-                    if (self.index == 0 and !ThrottleActivity.buttons[1].is_pressed) {
-                        ThrottleActivity.Throttle.movePercent("button A pressed", -5);
-                    } else if (self.index == 1 and !ThrottleActivity.buttons[0].is_pressed) {
-                        ThrottleActivity.Throttle.movePercent("button B pressed", 5);
+                    if (self.index == 0 and !buttons[1].is_pressed) {
+                        Throttle.movePercent("button A pressed", -5);
+                    } else if (self.index == 1 and !buttons[0].is_pressed) {
+                        Throttle.movePercent("button B pressed", 5);
                     } else {
-                        ThrottleActivity.Throttle.setPercent("Both buttons A and B pressed (reset throttle to 0%)", 0);
+                        Throttle.setPercent("Both buttons A and B pressed (reset throttle to 0%)", 0);
                     }
                 } else {
                     self.up_count += 1;
@@ -285,6 +285,10 @@ const TerminalActivity = struct {
         restoreInputLine();
     }
 
+    fn restoreInputLine() void {
+        Terminal.move(999, TerminalActivity.keyboard_column);
+    }
+
     fn update() void {
         if (Uart.isReadByteReady()) {
             const byte = Uart.readByte();
@@ -363,74 +367,6 @@ const TerminalActivity = struct {
     }
 };
 
-fn exceptionHandler(exception_number: u32) noreturn {
-    panicf("exception number {} ... now idle in arm exception handler", .{exception_number});
-}
-
-export fn mission03_exceptionNumber01() noreturn {
-    exceptionHandler(01);
-}
-
-export fn mission03_exceptionNumber02() noreturn {
-    exceptionHandler(02);
-}
-
-export fn mission03_exceptionNumber03() noreturn {
-    exceptionHandler(03);
-}
-
-export fn mission03_exceptionNumber04() noreturn {
-    exceptionHandler(04);
-}
-
-export fn mission03_exceptionNumber05() noreturn {
-    exceptionHandler(05);
-}
-
-export fn mission03_exceptionNumber06() noreturn {
-    exceptionHandler(06);
-}
-
-export fn mission03_exceptionNumber07() noreturn {
-    exceptionHandler(07);
-}
-
-export fn mission03_exceptionNumber08() noreturn {
-    exceptionHandler(08);
-}
-
-export fn mission03_exceptionNumber09() noreturn {
-    exceptionHandler(09);
-}
-
-export fn mission03_exceptionNumber10() noreturn {
-    exceptionHandler(10);
-}
-
-export fn mission03_exceptionNumber11() noreturn {
-    exceptionHandler(11);
-}
-
-export fn mission03_exceptionNumber12() noreturn {
-    exceptionHandler(12);
-}
-
-export fn mission03_exceptionNumber13() noreturn {
-    exceptionHandler(13);
-}
-
-export fn mission03_exceptionNumber14() noreturn {
-    exceptionHandler(14);
-}
-
-export fn mission03_exceptionNumber15() noreturn {
-    exceptionHandler(15);
-}
-
-fn restoreInputLine() void {
-    Terminal.move(999, TerminalActivity.keyboard_column);
-}
-
 comptime {
     asm (
         \\.section .text.start.mission03
@@ -439,20 +375,20 @@ comptime {
         \\mission03_vector_table:
         \\ .long 0x20004000 - 4 // sp top of 16KB ram
         \\ .long mission03_main
-        \\ .long mission03_exceptionNumber02
-        \\ .long mission03_exceptionNumber03
-        \\ .long mission03_exceptionNumber04
-        \\ .long mission03_exceptionNumber05
-        \\ .long mission03_exceptionNumber06
-        \\ .long mission03_exceptionNumber07
-        \\ .long mission03_exceptionNumber08
-        \\ .long mission03_exceptionNumber09
-        \\ .long mission03_exceptionNumber10
-        \\ .long mission03_exceptionNumber11
-        \\ .long mission03_exceptionNumber12
-        \\ .long mission03_exceptionNumber13
-        \\ .long mission03_exceptionNumber14
-        \\ .long mission03_exceptionNumber15
+        \\ .long lib00_exceptionNumber02
+        \\ .long lib00_exceptionNumber03
+        \\ .long lib00_exceptionNumber04
+        \\ .long lib00_exceptionNumber05
+        \\ .long lib00_exceptionNumber06
+        \\ .long lib00_exceptionNumber07
+        \\ .long lib00_exceptionNumber08
+        \\ .long lib00_exceptionNumber09
+        \\ .long lib00_exceptionNumber10
+        \\ .long lib00_exceptionNumber11
+        \\ .long lib00_exceptionNumber12
+        \\ .long lib00_exceptionNumber13
+        \\ .long lib00_exceptionNumber14
+        \\ .long lib00_exceptionNumber15
     );
 }
 

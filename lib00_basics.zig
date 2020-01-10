@@ -100,19 +100,11 @@ pub const Gpiote = struct {
 };
 
 pub const LedMatrix = struct {
-    var image: u32 = undefined;
-    var max_elapsed: u32 = undefined;
+    pub var max_elapsed: u32 = undefined;
+    pub var image: u32 = undefined;
     var scan_lines: [3]u32 = undefined;
     var scan_lines_index: u32 = undefined;
     var scan_timer: TimeKeeper = undefined;
-
-    pub fn currentImage() u32 {
-        return image;
-    }
-
-    pub fn maxElapsed() u32 {
-        return max_elapsed;
-    }
 
     pub fn prepare() void {
         image = 0;

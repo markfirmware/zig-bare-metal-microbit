@@ -6,89 +6,91 @@ export fn mission03_main() noreturn {
     Timer2.prepare();
     LedMatrix.prepare();
 
-    cycle_activity.prepare();
-    terminal_activity.prepare();
-    throttle_activity.prepare();
+    CycleActivity.prepare();
+    TerminalActivity.prepare();
+    ThrottleActivity.prepare();
 
     Uart.setUpdater(LedMatrix.update);
 
     while (true) {
-        cycle_activity.update();
-        terminal_activity.update();
-        throttle_activity.update();
+        CycleActivity.update();
+        TerminalActivity.update();
+        ThrottleActivity.update();
     }
 }
 
 const CycleActivity = struct {
-    cycle_counter: u32,
-    cycle_time: u32,
-    cycles_per_second: u32,
-    last_cycle_counter: u32,
-    last_cycle_start: ?u32,
-    max_cycle_time: u32,
-    up_time_seconds: u32,
-    up_timer: TimeKeeper,
+    var cycle_counter: u32 = undefined;
+    var cycle_time: u32 = undefined;
+    var cycles_per_second: u32 = undefined;
+    var last_cycle_counter: u32 = undefined;
+    var last_cycle_start: ?u32 = undefined;
+    var max_cycle_time: u32 = undefined;
+    var up_time_seconds: u32 = undefined;
+    var up_timer: TimeKeeper = undefined;
 
-    fn prepare(self: *CycleActivity) void {
-        self.cycle_counter = 0;
-        self.cycle_time = 0;
-        self.cycles_per_second = 1;
-        self.last_cycle_counter = 0;
-        self.last_cycle_start = null;
-        self.max_cycle_time = 0;
-        self.up_time_seconds = 0;
-        self.up_timer.prepare(1000 * 1000);
+    fn prepare() void {
+        cycle_counter = 0;
+        cycle_time = 0;
+        cycles_per_second = 1;
+        last_cycle_counter = 0;
+        last_cycle_start = null;
+        max_cycle_time = 0;
+        up_time_seconds = 0;
+        up_timer.prepare(1000 * 1000);
     }
 
-    fn update(self: *CycleActivity) void {
+    fn update() void {
         LedMatrix.update();
-        self.cycle_counter += 1;
+        cycle_counter += 1;
         const new_cycle_start = Timer0.capture();
-        if (self.up_timer.isFinished()) {
-            self.up_timer.reset();
-            self.up_time_seconds += 1;
-            self.cycles_per_second = self.cycle_counter -% self.last_cycle_counter;
-            self.last_cycle_counter = self.cycle_counter;
+        if (up_timer.isFinished()) {
+            up_timer.reset();
+            up_time_seconds += 1;
+            cycles_per_second = cycle_counter -% last_cycle_counter;
+            last_cycle_counter = cycle_counter;
         }
-        if (self.last_cycle_start) |start| {
-            self.cycle_time = new_cycle_start -% start;
-            self.max_cycle_time = math.max(self.cycle_time, self.max_cycle_time);
+        if (last_cycle_start) |start| {
+            cycle_time = new_cycle_start -% start;
+            max_cycle_time = math.max(cycle_time, max_cycle_time);
         }
-        self.last_cycle_start = new_cycle_start;
+        last_cycle_start = new_cycle_start;
     }
 };
 
 const ThrottleActivity = struct {
-    buttons: [2]Button,
-    pwm_counter: u32,
-    led_scroller: LedScroller,
-    throttle: Throttle,
+    var buttons: [2]Button = undefined;
+    var pwm_loop_back_counter: u32 = undefined;
 
-    fn prepare(self: *ThrottleActivity) void {
-        self.pwm_counter = 0;
-        self.throttle.prepare();
-        for (self.buttons) |*b, i| {
-            b.prepare(i);
-        }
-        self.led_scroller.prepare();
-        self.redraw();
-        self.update();
+    fn loopBackPercent() u32 {
+        return ThrottleActivity.pwm_loop_back_counter * 100 * 1000 / CycleActivity.cycles_per_second / 1000;
     }
 
-    fn redraw(self: *ThrottleActivity) void {
-        for (self.buttons) |*b| {
+    fn prepare() void {
+        pwm_loop_back_counter = 0;
+        Throttle.prepare();
+        for (buttons) |*b, i| {
+            b.prepare(i);
+        }
+        LedScroller.prepare();
+        redraw();
+        update();
+    }
+
+    fn redraw() void {
+        for (buttons) |*b| {
             b.draw();
         }
     }
 
-    fn update(self: *ThrottleActivity) void {
+    fn update() void {
         if (Gpio.registers.in & Gpio.registers_masks.ring0 != 0) {
-            self.pwm_counter += 1;
+            pwm_loop_back_counter += 1;
         }
-        for (self.buttons) |*button| {
+        for (buttons) |*button| {
             button.update();
         }
-        self.led_scroller.update();
+        LedScroller.update();
     }
 
     const Button = struct {
@@ -145,12 +147,12 @@ const ThrottleActivity = struct {
                 restoreInputLine();
                 if (self.is_pressed) {
                     self.down_count += 1;
-                    if (self.index == 0 and !throttle_activity.buttons[1].is_pressed) {
-                        throttle_activity.throttle.movePercent("button A pressed", -5);
-                    } else if (self.index == 1 and !throttle_activity.buttons[0].is_pressed) {
-                        throttle_activity.throttle.movePercent("button B pressed", 5);
+                    if (self.index == 0 and !ThrottleActivity.buttons[1].is_pressed) {
+                        ThrottleActivity.Throttle.movePercent("button A pressed", -5);
+                    } else if (self.index == 1 and !ThrottleActivity.buttons[0].is_pressed) {
+                        ThrottleActivity.Throttle.movePercent("button B pressed", 5);
                     } else {
-                        throttle_activity.throttle.setPercent("Both buttons A and B pressed (reset throttle to 0%)", 0);
+                        ThrottleActivity.Throttle.setPercent("Both buttons A and B pressed (reset throttle to 0%)", 0);
                     }
                 } else {
                     self.up_count += 1;
@@ -160,99 +162,99 @@ const ThrottleActivity = struct {
     };
 
     const LedScroller = struct {
-        column: u32,
-        text: []u8,
-        text_buf: [text_len_max]u8,
+        var column: u32 = undefined;
+        var displayed_percent: u32 = undefined;
+        var text: []u8 = undefined;
+        var text_buf: [text_len_max]u8 = undefined;
         const text_len_max = 4;
-        percent: u32,
-        timer: TimeKeeper,
+        var timer: TimeKeeper = undefined;
 
-        fn prepare(self: *LedScroller) void {
-            self.column = 0;
-            self.text = self.text_buf[0..0];
-            self.timer.prepare(100 * 1000);
+        fn prepare() void {
+            column = 0;
+            text = text_buf[0..0];
+            timer.prepare(100 * 1000);
         }
 
-        fn update(self: *LedScroller) void {
-            if (self.timer.isFinished()) {
-                self.timer.reset();
-                var index = self.column / 6;
-                if (self.column % 6 == 0) {
-                    if (index == self.text.len) {
-                        const percent = throttle_activity.throttle.percent;
-                        if (self.text.len == 0 or percent != self.percent) {
-                            self.percent = percent;
-                            self.text = self.text_buf[0..2];
-                            self.text[0] = ' ';
-                            if (percent < 10) {
-                                self.text[1] = '0' + @truncate(u8, percent % 10);
-                            } else if (percent < 100) {
-                                self.text = self.text_buf[0..3];
-                                self.text[1] = '0' + @truncate(u8, percent / 10);
-                                self.text[2] = '0' + @truncate(u8, percent % 10);
+        fn update() void {
+            if (timer.isFinished()) {
+                timer.reset();
+                var index = column / 6;
+                if (column % 6 == 0) {
+                    if (index == text.len) {
+                        if (text.len == 0 or Throttle.percent != displayed_percent) {
+                            displayed_percent = Throttle.percent;
+                            text = text_buf[0..2];
+                            text[0] = ' ';
+                            if (displayed_percent < 10) {
+                                text[1] = '0' + @truncate(u8, displayed_percent % 10);
+                            } else if (displayed_percent < 100) {
+                                text = text_buf[0..3];
+                                text[1] = '0' + @truncate(u8, displayed_percent / 10);
+                                text[2] = '0' + @truncate(u8, displayed_percent % 10);
                             } else {
-                                self.text = self.text_buf[0..4];
-                                self.text[1] = '1';
-                                self.text[2] = '0';
-                                self.text[3] = '0';
+                                text = text_buf[0..4];
+                                text[1] = '1';
+                                text[2] = '0';
+                                text[3] = '0';
                             }
-                            if (percent == 0) {
+                            if (displayed_percent == 0) {
                                 log("scrolling '0' just once", .{});
                             } else {
-                                log("scrolling '{}' repeatedly", .{self.text});
+                                log("scrolling '{}' repeatedly", .{text});
                             }
-                        } else if (percent == 0) {
+                        } else if (displayed_percent == 0) {
                             return;
                         }
-                        self.column = 0;
+                        column = 0;
                         index = 0;
                     }
                 }
                 const mask: u32 = 0b1111011110111101111011110;
-                const right = if (self.column % 6 == 0) 0 else LedMatrix.getImage(self.text[index]) >> @truncate(u5, (5 - self.column % 6));
-                LedMatrix.putImage(LedMatrix.currentImage() << 1 & mask | (right & ~mask));
-                self.column += 1;
+                const right = if (column % 6 == 0) 0 else LedMatrix.getImage(text[index]) >> @truncate(u5, (5 - column % 6));
+                LedMatrix.putImage(LedMatrix.image << 1 & mask | (right & ~mask));
+                column += 1;
             }
         }
     };
 
     const Throttle = struct {
-        pwm_out_of_312: u32,
-        percent: u32,
+        var pwm_width_ticks: u32 = undefined;
+        const pwm_width_ticks_max = 312;
+        var percent: u32 = undefined;
 
-        fn movePercent(self: *Throttle, message: []const u8, delta: i32) void {
-            self.setPercent(message, @intCast(i32, self.percent) + delta);
+        fn movePercent(message: []const u8, delta: i32) void {
+            setPercent(message, @intCast(i32, percent) + delta);
         }
 
-        fn prepare(self: *Throttle) void {
-            self.percent = 0;
+        fn prepare() void {
+            percent = 0;
             Gpio.config[02] = Gpio.config_masks.output;
             Gpio.config[03] = Gpio.config_masks.input;
             Ppi.setChannelEventAndTask(0, &Timer1.events.compare[0], &Gpiote.tasks.out[0]);
             Ppi.setChannelEventAndTask(1, &Timer1.events.compare[1], &Gpiote.tasks.out[0]);
             Timer1.short_cuts.shorts = 0x002;
-            Timer1.capture_compare_registers[1] = 312;
+            Timer1.capture_compare_registers[1] = pwm_width_ticks_max;
         }
 
-        fn setPercent(self: *Throttle, message: []const u8, new: i32) void {
-            const percent = @intCast(u32, math.min(math.max(new, 0), 100));
-            if (percent != self.percent) {
-                log("{}: throttle changed from {} to {}", .{ message, self.percent, percent });
+        fn setPercent(message: []const u8, new: i32) void {
+            const new_percent = @intCast(u32, math.min(math.max(new, 0), 100));
+            if (new_percent != percent) {
+                log("{}: throttle changed from {} to {}", .{ message, percent, new_percent });
             } else {
-                log("{}: throttle remains at {}%", .{ message, self.percent });
+                log("{}: throttle remains at {}%", .{ message, percent });
             }
-            self.percent = percent;
+            percent = new_percent;
             Timer1.tasks.stop = 1;
             const ppi_channels_0_and_1_mask = 1 << 0 | 1 << 1;
             Ppi.registers.channel_enable_clear = ppi_channels_0_and_1_mask;
             Gpiote.config[0] = Gpiote.config_masks.disable;
             Gpio.registers.out_clear = Gpio.registers_masks.ring1;
-            self.pwm_out_of_312 = 0;
+            pwm_width_ticks = 0;
             if (percent == 100) {
                 Gpio.registers.out_set = Gpio.registers_masks.ring1;
             } else if (percent > 0) {
-                self.pwm_out_of_312 = 1000 * (100 - percent) * 312 / (100 * 1000);
-                Timer1.capture_compare_registers[0] = self.pwm_out_of_312;
+                pwm_width_ticks = 1000 * (100 - percent) * pwm_width_ticks_max / (100 * 1000);
+                Timer1.capture_compare_registers[0] = pwm_width_ticks;
                 Gpio.registers.out_clear = Gpio.registers_masks.ring1;
                 Gpiote.config[0] = 0x30203;
                 Ppi.registers.channel_enable_set = ppi_channels_0_and_1_mask;
@@ -264,18 +266,18 @@ const ThrottleActivity = struct {
 };
 
 const TerminalActivity = struct {
-    keyboard_column: u32,
-    prev_led_image: u32,
-    prev_now: u32,
+    var keyboard_column: u32 = undefined;
+    var prev_led_image: u32 = undefined;
+    var prev_now: u32 = undefined;
 
-    fn prepare(self: *TerminalActivity) void {
-        self.keyboard_column = 1;
-        self.prev_led_image = 0;
-        self.prev_now = cycle_activity.up_time_seconds;
-        self.redraw();
+    fn prepare() void {
+        keyboard_column = 1;
+        prev_led_image = 0;
+        prev_now = CycleActivity.up_time_seconds;
+        redraw();
     }
 
-    fn redraw(self: *TerminalActivity) void {
+    fn redraw() void {
         Terminal.clearScreen();
         Terminal.setScrollingRegion(status_display_lines, 99);
         Terminal.move(status_display_lines - 1, 1);
@@ -283,62 +285,62 @@ const TerminalActivity = struct {
         restoreInputLine();
     }
 
-    fn update(self: *TerminalActivity) void {
+    fn update() void {
         if (Uart.isReadByteReady()) {
             const byte = Uart.readByte();
             switch (byte) {
                 27 => {
                     Uart.writeByteBlocking('$');
-                    self.keyboard_column += 1;
+                    keyboard_column += 1;
                 },
                 'a' => {
-                    throttle_activity.buttons[0].toggle();
-                    throttle_activity.buttons[0].toggle();
+                    ThrottleActivity.buttons[0].toggle();
+                    ThrottleActivity.buttons[0].toggle();
                 },
                 'b' => {
-                    throttle_activity.buttons[1].toggle();
-                    throttle_activity.buttons[1].toggle();
+                    ThrottleActivity.buttons[1].toggle();
+                    ThrottleActivity.buttons[1].toggle();
                 },
                 'c' => {
-                    throttle_activity.buttons[0].toggle();
-                    throttle_activity.buttons[1].toggle();
-                    throttle_activity.buttons[0].toggle();
-                    throttle_activity.buttons[1].toggle();
+                    ThrottleActivity.buttons[0].toggle();
+                    ThrottleActivity.buttons[1].toggle();
+                    ThrottleActivity.buttons[0].toggle();
+                    ThrottleActivity.buttons[1].toggle();
                 },
                 'A' => {
-                    throttle_activity.buttons[0].toggle();
+                    ThrottleActivity.buttons[0].toggle();
                 },
                 'B' => {
-                    throttle_activity.buttons[1].toggle();
+                    ThrottleActivity.buttons[1].toggle();
                 },
                 12 => {
-                    self.keyboard_column = 1;
-                    terminal_activity.prev_led_image = 0;
-                    terminal_activity.redraw();
-                    throttle_activity.redraw();
+                    keyboard_column = 1;
+                    TerminalActivity.prev_led_image = 0;
+                    TerminalActivity.redraw();
+                    ThrottleActivity.redraw();
                 },
                 '\r' => {
                     Uart.writeText("\n");
-                    self.keyboard_column = 1;
+                    keyboard_column = 1;
                 },
                 else => {
                     Uart.writeByteBlocking(byte);
-                    self.keyboard_column += 1;
+                    keyboard_column += 1;
                 },
             }
         }
         Uart.update();
-        const now = cycle_activity.up_time_seconds;
-        if (now >= self.prev_now + 1) {
+        const now = CycleActivity.up_time_seconds;
+        if (now >= prev_now + 1) {
             Terminal.hideCursor();
             Terminal.move(1, 1);
-            Terminal.line("up {:3}s cycle {}Hz {}us max {}us led max {}us", .{ cycle_activity.up_time_seconds, cycle_activity.cycles_per_second, cycle_activity.cycle_time, cycle_activity.max_cycle_time, LedMatrix.maxElapsed() });
-            Terminal.line("throttle {:2}% pwm {:2}% cc0 {} raw {}", .{ throttle_activity.throttle.percent, throttle_activity.pwm_counter * 100 * 1000 / cycle_activity.cycles_per_second / 1000, throttle_activity.throttle.pwm_out_of_312, throttle_activity.pwm_counter });
+            Terminal.line("up {:3}s cycle {}Hz {}us max {}us led max {}us", .{ CycleActivity.up_time_seconds, CycleActivity.cycles_per_second, CycleActivity.cycle_time, CycleActivity.max_cycle_time, LedMatrix.max_elapsed });
+            Terminal.line("throttle {:2}% pwm {:2}% cc0 {} raw {}", .{ ThrottleActivity.Throttle.percent, ThrottleActivity.loopBackPercent(), ThrottleActivity.Throttle.pwm_width_ticks, ThrottleActivity.pwm_loop_back_counter });
             Terminal.showCursor();
             restoreInputLine();
-            self.prev_now = now;
-            throttle_activity.pwm_counter = 0;
-        } else if (LedMatrix.currentImage() != self.prev_led_image) {
+            prev_now = now;
+            ThrottleActivity.pwm_loop_back_counter = 0;
+        } else if (LedMatrix.image != prev_led_image) {
             Terminal.hideCursor();
             Terminal.attribute(33);
             var mask: u32 = 0x1;
@@ -346,15 +348,15 @@ const TerminalActivity = struct {
             while (y >= 0) : (y -= 1) {
                 var x: i32 = 4;
                 while (x >= 0) : (x -= 1) {
-                    const v = LedMatrix.currentImage() & mask;
-                    if (v != self.prev_led_image & mask) {
+                    const v = LedMatrix.image & mask;
+                    if (v != prev_led_image & mask) {
                         Terminal.move(@intCast(u32, 4 + y), @intCast(u32, 21 + 2 * x));
                         Uart.writeText(if (v != 0) "[]" else "  ");
                     }
                     mask <<= 1;
                 }
             }
-            self.prev_led_image = LedMatrix.currentImage();
+            prev_led_image = LedMatrix.image;
             Terminal.attribute(0);
             restoreInputLine();
         }
@@ -426,7 +428,7 @@ export fn mission03_exceptionNumber15() noreturn {
 }
 
 fn restoreInputLine() void {
-    Terminal.move(999, terminal_activity.keyboard_column);
+    Terminal.move(999, TerminalActivity.keyboard_column);
 }
 
 comptime {
@@ -475,7 +477,3 @@ const Timer2 = lib.Timer2;
 const Uart = lib.Uart;
 
 pub const panic = lib.lib00_panic;
-
-var cycle_activity: CycleActivity = undefined;
-var terminal_activity: TerminalActivity = undefined;
-var throttle_activity: ThrottleActivity = undefined;

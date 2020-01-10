@@ -573,7 +573,7 @@ const StatusActivity = struct {
             restoreInputLine();
             self.prev_now = now;
             self.pwm_counter = 0;
-        } else if (LedMatrix.currentImage() != self.prev_led_image) {
+        } else if (LedMatrix.image != self.prev_led_image) {
             Terminal.hideCursor();
             Terminal.attribute(33);
             var mask: u32 = 0x1;
@@ -581,7 +581,7 @@ const StatusActivity = struct {
             while (y >= 0) : (y -= 1) {
                 var x: i32 = 4;
                 while (x >= 0) : (x -= 1) {
-                    const v = LedMatrix.currentImage() & mask;
+                    const v = LedMatrix.image & mask;
                     if (v != self.prev_led_image & mask) {
                         Terminal.move(@intCast(u32, 4 + y), @intCast(u32, 1 + 2 * x));
                         Uart.writeText(if (v != 0) "[]" else "  ");
@@ -589,7 +589,7 @@ const StatusActivity = struct {
                     mask <<= 1;
                 }
             }
-            self.prev_led_image = LedMatrix.currentImage();
+            self.prev_led_image = LedMatrix.image;
             Terminal.attribute(0);
             restoreInputLine();
         }

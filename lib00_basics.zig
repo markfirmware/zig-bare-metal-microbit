@@ -11,16 +11,16 @@ pub const ClockManagement = struct {
         while (events.hf_clock_started == 0) {}
     }
 
-    pub const events = mmio(0x40000100, struct {
+    pub const events = mmio(0x40000100, extern struct {
         hf_clock_started: u32,
         lf_clock_started: u32,
     });
 
-    pub const crystal_registers = mmio(0x40000550, struct {
+    pub const crystal_registers = mmio(0x40000550, extern struct {
         frequency_selector: u32,
     });
 
-    pub const tasks = mmio(0x40000000, struct {
+    pub const tasks = mmio(0x40000000, extern struct {
         start_hf_clock: u32,
         stop_hf_clock: u32,
         start_lf_clock: u32,
@@ -41,7 +41,7 @@ pub const Exceptions = struct {
 };
 
 pub const Ficr = struct {
-    pub const radio = mmio(0x100000a0, struct {
+    pub const radio = mmio(0x100000a0, extern struct {
         device_address_type: u32,
         device_address0: u32,
         device_address1: u32,
@@ -64,7 +64,7 @@ pub const Gpio = struct {
         .{ .{ 3, 3 }, .{ 2, 7 }, .{ 3, 1 }, .{ 2, 6 }, .{ 3, 2 } },
     };
 
-    pub const registers = mmio(0x50000504, struct {
+    pub const registers = mmio(0x50000504, extern struct {
         out: u32,
         out_set: u32,
         out_clear: u32,
@@ -184,7 +184,7 @@ pub const Ppi = struct {
         channels[channel].task_end_point = @ptrToInt(task);
     }
 
-    pub const registers = mmio(0x4001f500, struct {
+    pub const registers = mmio(0x4001f500, extern struct {
         channel_enable: u32,
         channel_enable_set: u32,
         channel_enable_clear: u32,
@@ -197,7 +197,7 @@ pub const Ppi = struct {
 };
 
 pub const Radio = struct {
-    pub const events = mmio(0x40001100, struct {
+    pub const events = mmio(0x40001100, extern struct {
         ready: u32,
         address_completed: u32,
         payload_completed: u32,
@@ -229,18 +229,18 @@ pub const Radio = struct {
         datawhiteiv: u32,
     });
 
-    pub const rx_registers = mmio(0x40001400, struct {
+    pub const rx_registers = mmio(0x40001400, extern struct {
         crc_status: u32,
         unused0x404: u32,
         unused0x408: u32,
         rx_crc: u32,
     });
 
-    pub const short_cuts = mmio(0x40001200, struct {
+    pub const short_cuts = mmio(0x40001200, extern struct {
         shorts: u32,
     });
 
-    pub const tasks = mmio(0x40001000, struct {
+    pub const tasks = mmio(0x40001000, extern struct {
         tx_enable: u32,
         rx_enable: u32,
         start: u32,
@@ -255,16 +255,16 @@ pub const Rng = struct {
         tasks.start = 1;
     }
 
-    pub const events = mmio(0x4000d100, struct {
+    pub const events = mmio(0x4000d100, extern struct {
         value_ready: u32,
     });
 
-    pub const registers = mmio(0x4000d504, struct {
+    pub const registers = mmio(0x4000d504, extern struct {
         config: u32,
         value: u32,
     });
 
-    pub const tasks = mmio(0x4000d000, struct {
+    pub const tasks = mmio(0x4000d000, extern struct {
         start: u32,
         stop: u32,
     });
@@ -377,18 +377,18 @@ pub fn TimerInstance(instance_address: u32) type {
             pub const compare = mmio(instance_address + 0x140, [4]u32);
         };
 
-        pub const registers = mmio(instance_address + 0x504, struct {
+        pub const registers = mmio(instance_address + 0x504, extern struct {
             mode: u32,
             bit_mode: u32,
             unused0x50c: u32,
             prescaler: u32,
         });
 
-        pub const short_cuts = mmio(instance_address + 0x200, struct {
+        pub const short_cuts = mmio(instance_address + 0x200, extern struct {
             shorts: u32,
         });
 
-        pub const tasks = mmio(instance_address + 0x000, struct {
+        pub const tasks = mmio(instance_address + 0x000, extern struct {
             start: u32,
             stop: u32,
             count: u32,
@@ -482,7 +482,7 @@ pub const Uart = struct {
         }
     }
 
-    const events = mmio(0x40002108, struct {
+    const events = mmio(0x40002108, extern struct {
         rx_ready: u32,
         unused0x10c: u32,
         unused0x110: u32,
@@ -493,11 +493,11 @@ pub const Uart = struct {
         error_detected: u32,
     });
 
-    const error_registers = mmio(0x40002480, struct {
+    const error_registers = mmio(0x40002480, extern struct {
         error_source: u32,
     });
 
-    const registers = mmio(0x40002500, struct {
+    const registers = mmio(0x40002500, extern struct {
         enable: u32,
         unused0x504: u32,
         pin_select_rts: u32,
@@ -510,7 +510,7 @@ pub const Uart = struct {
         baud_rate: u32,
     });
 
-    const tasks = mmio(0x40002000, struct {
+    const tasks = mmio(0x40002000, extern struct {
         start_rx: u32,
         stop_rx: u32,
         start_tx: u32,
@@ -524,8 +524,8 @@ pub fn hangf(comptime format: []const u8, args: var) noreturn {
     while (true) {}
 }
 
-pub fn mmio(address: u32, comptime StructType: type) *volatile StructType {
-    return @intToPtr(*volatile StructType, address);
+pub fn mmio(address: u32, comptime mmio_type: type) *volatile mmio_type {
+    return @intToPtr(*volatile mmio_type, address);
 }
 
 pub fn panic(message: []const u8, trace: ?*builtin.StackTrace) noreturn {

@@ -1,12 +1,12 @@
 #!/bin/bash
 set -e
 
-ARCH=armv6m
+ARCH=thumbv6m
 SOURCE=$(ls mission00*.zig)
 
 echo zig version $(zig version)
 zig fmt *.zig
-zig build-exe -target $ARCH-freestanding-eabihf --linker-script linker.ld --name main $SOURCE
+zig build-exe -target $ARCH-freestanding-none --linker-script linker.ld --name main $SOURCE
 #llvm-objdump -x --source main > asm.$ARCH
 #set +e
 #grep unknown asm.$ARCH | grep -v '00 00 00 00'

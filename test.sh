@@ -6,12 +6,12 @@ export PATH=~/zig:$PATH
 MISSION_NUMBER=${1:-00}
 SOURCE=$(ls mission${MISSION_NUMBER}_*.zig)
 EXE=${SOURCE%.*}
-ARCH=armv6m
+ARCH=thumbv6m
 
 echo $SOURCE
 echo zig version $(zig version)
 zig fmt $SOURCE
-zig build-exe -target $ARCH-freestanding-eabihf --linker-script linker.ld $SOURCE
+zig build-exe -target $ARCH-freestanding-none --linker-script linker.ld $SOURCE
 llvm-objdump -x --source $EXE > $EXE.asm.$ARCH
 set +e
 grep unknown $EXE.asm.$ARCH | grep -v '00 00 00 00'

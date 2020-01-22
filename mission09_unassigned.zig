@@ -40,7 +40,7 @@ const CycleActivity = struct {
         const new_cycle_start = Timer0.capture();
         if (last_cycle_start) |start| {
             cycle_time = new_cycle_start -% start;
-            max_cycle_time = std.math.max(cycle_time, max_cycle_time);
+            max_cycle_time = math.max(cycle_time, max_cycle_time);
         }
         last_cycle_start = new_cycle_start;
         if (up_timer.isFinished()) {
@@ -102,33 +102,9 @@ const TerminalActivity = struct {
 };
 
 comptime {
-    asm (
-        \\.section .text.start.mission09
-        \\.globl mission09_vector_table
-        \\.balign 0x80
-        \\mission09_vector_table:
-        \\ .long 0x20004000 // sp top of 16KB ram
-        \\ .long mission09_main
-        \\ .long lib00_exceptionNumber02
-        \\ .long lib00_exceptionNumber03
-        \\ .long lib00_exceptionNumber04
-        \\ .long lib00_exceptionNumber05
-        \\ .long lib00_exceptionNumber06
-        \\ .long lib00_exceptionNumber07
-        \\ .long lib00_exceptionNumber08
-        \\ .long lib00_exceptionNumber09
-        \\ .long lib00_exceptionNumber10
-        \\ .long lib00_exceptionNumber11
-        \\ .long lib00_exceptionNumber12
-        \\ .long lib00_exceptionNumber13
-        \\ .long lib00_exceptionNumber14
-        \\ .long lib00_exceptionNumber15
-    );
+    asm (typicalVectorTable(mission));
 }
 
-const builtin = @import("builtin");
-const std = @import("std");
+const mission = 9;
 
-pub const panic = lib00_panic;
-
-usingnamespace @import("lib00_basics.zig");
+usingnamespace @import("use00_typical_mission.zig").typical;

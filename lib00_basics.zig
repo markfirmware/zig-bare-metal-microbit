@@ -528,7 +528,7 @@ pub fn mmio(address: u32, comptime StructType: type) *volatile StructType {
     return @intToPtr(*volatile StructType, address);
 }
 
-pub fn lib00_panic(message: []const u8, trace: ?*builtin.StackTrace) noreturn {
+pub fn panic(message: []const u8, trace: ?*builtin.StackTrace) noreturn {
     panicf("panic(): {}", .{message});
 }
 
@@ -540,6 +540,39 @@ pub fn panicf(comptime format: []const u8, args: var) noreturn {
     Exceptions.already_panicking = true;
     log("\npanic: " ++ format, args);
     hangf("panic completed", .{});
+}
+
+pub fn typicalVectorTable(comptime mission_index: u32) []const u8 {
+    var buf: [2]u8 = undefined;
+    const mission_string = std.fmt.bufPrint(&buf, "{:2}", .{mission_index}) catch |_| panicf("", .{});
+    for (mission_string) |*space| {
+        if (space.* == ' ') {
+            space.* = '0';
+        } else {
+            break;
+        }
+    }
+    return ".section .text.start.mission" ++ mission_string ++ "\n" ++
+        ".globl mission" ++ mission_string ++ "_vector_table\n" ++
+        ".balign 0x80\n" ++
+        "mission" ++ mission_string ++ "_vector_table:\n" ++
+        " .long 0x20004000 - 4 // sp top of 16KB ram\n" ++
+        " .long mission" ++ mission_string ++ "_main\n" ++
+        \\ .long lib00_exceptionNumber02
+        \\ .long lib00_exceptionNumber03
+        \\ .long lib00_exceptionNumber04
+        \\ .long lib00_exceptionNumber05
+        \\ .long lib00_exceptionNumber06
+        \\ .long lib00_exceptionNumber07
+        \\ .long lib00_exceptionNumber08
+        \\ .long lib00_exceptionNumber09
+        \\ .long lib00_exceptionNumber10
+        \\ .long lib00_exceptionNumber11
+        \\ .long lib00_exceptionNumber12
+        \\ .long lib00_exceptionNumber13
+        \\ .long lib00_exceptionNumber14
+        \\ .long lib00_exceptionNumber15
+    ;
 }
 
 fn uart_logBytes(context: void, bytes: []const u8) error{}!void {

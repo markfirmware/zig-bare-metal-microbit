@@ -722,7 +722,7 @@ const Timer1 = lib.Timer1;
 const Timer2 = lib.Timer2;
 const Uart = lib.Uart;
 
-pub const panic = lib.lib00_panic;
+pub const panic = lib.panic;
 
 var cycle_activity: CycleActivity = undefined;
 var gpio: Gpio = undefined;

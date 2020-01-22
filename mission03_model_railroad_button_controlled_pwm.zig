@@ -83,6 +83,14 @@ const ThrottleActivity = struct {
         }
     }
 
+    fn releaseSimulatedButtons() void {
+        for (buttons) |*b| {
+            if (b.is_simulation_pressed) {
+                b.toggleSimulated();
+            }
+        }
+    }
+
     fn update() void {
         if (Gpio.registers.in & Gpio.registers_masks.ring0 != 0) {
             pwm_loop_back_counter += 1;
@@ -134,7 +142,7 @@ const ThrottleActivity = struct {
             self.update();
         }
 
-        fn toggle(self: *Button) void {
+        fn toggleSimulated(self: *Button) void {
             self.is_simulation_pressed = !self.is_simulation_pressed;
             self.update();
         }
@@ -298,24 +306,27 @@ const TerminalActivity = struct {
                     keyboard_column += 1;
                 },
                 'a' => {
-                    ThrottleActivity.buttons[0].toggle();
-                    ThrottleActivity.buttons[0].toggle();
+                    ThrottleActivity.releaseSimulatedButtons();
+                    ThrottleActivity.buttons[0].toggleSimulated();
+                    ThrottleActivity.buttons[0].toggleSimulated();
                 },
                 'b' => {
-                    ThrottleActivity.buttons[1].toggle();
-                    ThrottleActivity.buttons[1].toggle();
+                    ThrottleActivity.releaseSimulatedButtons();
+                    ThrottleActivity.buttons[1].toggleSimulated();
+                    ThrottleActivity.buttons[1].toggleSimulated();
                 },
                 'c' => {
-                    ThrottleActivity.buttons[0].toggle();
-                    ThrottleActivity.buttons[1].toggle();
-                    ThrottleActivity.buttons[0].toggle();
-                    ThrottleActivity.buttons[1].toggle();
+                    ThrottleActivity.releaseSimulatedButtons();
+                    ThrottleActivity.buttons[0].toggleSimulated();
+                    ThrottleActivity.buttons[1].toggleSimulated();
+                    ThrottleActivity.buttons[0].toggleSimulated();
+                    ThrottleActivity.buttons[1].toggleSimulated();
                 },
                 'A' => {
-                    ThrottleActivity.buttons[0].toggle();
+                    ThrottleActivity.buttons[0].toggleSimulated();
                 },
                 'B' => {
-                    ThrottleActivity.buttons[1].toggle();
+                    ThrottleActivity.buttons[1].toggleSimulated();
                 },
                 12 => {
                     keyboard_column = 1;
@@ -368,48 +379,10 @@ const TerminalActivity = struct {
 };
 
 comptime {
-    asm (
-        \\.section .text.start.mission03
-        \\.globl mission03_vector_table
-        \\.balign 0x80
-        \\mission03_vector_table:
-        \\ .long 0x20004000 - 4 // sp top of 16KB ram
-        \\ .long mission03_main
-        \\ .long lib00_exceptionNumber02
-        \\ .long lib00_exceptionNumber03
-        \\ .long lib00_exceptionNumber04
-        \\ .long lib00_exceptionNumber05
-        \\ .long lib00_exceptionNumber06
-        \\ .long lib00_exceptionNumber07
-        \\ .long lib00_exceptionNumber08
-        \\ .long lib00_exceptionNumber09
-        \\ .long lib00_exceptionNumber10
-        \\ .long lib00_exceptionNumber11
-        \\ .long lib00_exceptionNumber12
-        \\ .long lib00_exceptionNumber13
-        \\ .long lib00_exceptionNumber14
-        \\ .long lib00_exceptionNumber15
-    );
+    asm (typicalVectorTable(mission));
 }
 
-const Bss = lib.Bss;
-const builtin = @import("builtin");
-const Gpio = lib.Gpio;
-const Gpiote = lib.Gpiote;
-const lib = @import("lib00_basics.zig");
-const log = Uart.log;
-const math = std.math;
-const mem = std.mem;
-const LedMatrix = lib.LedMatrix;
-const panicf = lib.panicf;
-const Ppi = lib.Ppi;
-const std = @import("std");
+const mission = 3;
 const status_display_lines = 6 + 5;
-const Terminal = lib.Terminal;
-const TimeKeeper = lib.TimeKeeper;
-const Timer0 = lib.Timer0;
-const Timer1 = lib.Timer1;
-const Timer2 = lib.Timer2;
-const Uart = lib.Uart;
 
-pub const panic = lib.lib00_panic;
+usingnamespace @import("use00_typical_mission.zig").typical;

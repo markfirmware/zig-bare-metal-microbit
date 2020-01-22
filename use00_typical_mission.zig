@@ -10,6 +10,7 @@ pub const typical = struct {
     pub const math = std.math;
     pub const mem = std.mem;
     pub const LedMatrix = lib00.LedMatrix;
+    pub const panic = lib00.panic;
     pub const panicf = lib00.panicf;
     pub const Ppi = lib00.Ppi;
     pub const std = @import("std");
@@ -18,7 +19,6 @@ pub const typical = struct {
     pub const Timer0 = lib00.Timer0;
     pub const Timer1 = lib00.Timer1;
     pub const Timer2 = lib00.Timer2;
-    pub const typicalPanic = lib00.typicalPanic;
     pub const typicalVectorTable = lib00.typicalVectorTable;
     pub const Uart = lib00.Uart;
 };

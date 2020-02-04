@@ -37,7 +37,7 @@ pub const Exceptions = struct {
 
     pub fn handle(exception_number: u32) noreturn {
         panicf("exception number {} ... now idle in arm exception handler", .{exception_number});
-}
+    }
 };
 
 pub const Ficr = struct {
@@ -136,7 +136,7 @@ pub const LedMatrix = struct {
     }
 
     fn putPixel(x: u32, y: u32, v: u32) void {
-        const anode_number_and_cathode_number  = Gpio.led_anode_number_and_cathode_number_indexed_by_y_then_x[y][x];
+        const anode_number_and_cathode_number = Gpio.led_anode_number_and_cathode_number_indexed_by_y_then_x[y][x];
         const selected_scan_line_index = anode_number_and_cathode_number[0] - 1;
         const col_mask = @as(u32, 0x10) << @truncate(u5, anode_number_and_cathode_number[1] - 1);
         scan_lines[selected_scan_line_index] = scan_lines[selected_scan_line_index] & ~col_mask | v * col_mask;

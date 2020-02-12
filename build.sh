@@ -5,6 +5,7 @@ ARCH=thumbv6m
 SOURCE=$(ls mission00*.zig)
 
 echo zig version $(zig version)
+touch sumbols.txt
 zig fmt *.zig
 zig build
 

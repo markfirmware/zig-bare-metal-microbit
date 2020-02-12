@@ -4,6 +4,35 @@ pub const Bss = struct {
     }
 };
 
+pub const Adc = struct {
+        pub const busy_registers = mmio(0x40007400, extern struct {
+            busy: u32,
+        });
+
+        pub const events = mmio(0x40007100, extern struct {
+            end: u32,
+        });
+
+        pub const registers = mmio(0x40007500, extern struct {
+            enable: u32,
+            config: u32,
+            result: u32,
+        });
+
+        pub const registers_config_masks = struct {
+            pub const extrefsel = 0x30000;
+            pub const inpsel = 0x001c0;
+            pub const psel = 0xff00;
+            pub const refsel = 0x0060;
+            pub const resolution = 0x00003;
+        };
+
+        pub const tasks = mmio(0x40007000, extern struct {
+            start: u32,
+            stop: u32,
+        });
+};
+
 pub const ClockManagement = struct {
     pub fn prepareHf() void {
         crystal_registers.frequency_selector = 0xff;
@@ -41,11 +70,27 @@ pub const Exceptions = struct {
 };
 
 pub const Ficr = struct {
-    pub const radio = mmio(0x100000a0, extern struct {
+    pub fn deviceId() u64 {
+        return @as(u64, contents[0x64 / 4]) << 32 | contents[0x60 / 4];
+    }
+
+    pub fn dump() void {
+        for (contents) |word, i| {
+            log("{x:2} {x:8}", .{ i * 4, word });
+        }
+    }
+
+    pub fn isQemu() bool {
+        return deviceId() == 0x1234567800000003;
+    }
+
+    pub const contents = @intToPtr(*[64]u32, 0x10000000);
+
+    pub const radio = @intToPtr(*extern struct {
         device_address_type: u32,
         device_address0: u32,
         device_address1: u32,
-    });
+    }, 0x100000a0);
 };
 
 pub const Gpio = struct {
@@ -77,6 +122,8 @@ pub const Gpio = struct {
     pub const registers_masks = struct {
         pub const button_a_active_low: u32 = 1 << 17;
         pub const button_b_active_low: u32 = 1 << 26;
+        pub const i2c_scl: u32 = 1 << 0;
+        pub const i2c_sda: u32 = 1 << 30;
         pub const nine_led_cathodes_active_low: u32 = 0x1ff << 4;
         pub const ring0: u32 = 1 << 3;
         pub const ring1: u32 = 1 << 2;
@@ -98,6 +145,120 @@ pub const Gpiote = struct {
         pub const out = mmio(0x40006000, [4]u32);
     };
 };
+
+pub fn I2cInstance(instance_address: u32) type {
+    return struct {
+        pub fn prepare() void {
+            Gpio.registers.direction_set = Gpio.registers_masks.i2c_scl | Gpio.registers_masks.i2c_sda;
+            registers.pselscl = @ctz(u32, Gpio.registers_masks.i2c_scl);
+            registers.pselsda = @ctz(u32, Gpio.registers_masks.i2c_sda);
+            registers.frequency = frequencies.K400;
+            registers.enable = 5;
+        }
+
+        pub fn writeBlocking(device_address: u32, device_register_index: u32, data: []u8) !void {
+            device_addresses.device_address = device_address;
+            tasks.starttx = 1;
+            registers.txd = device_register_index;
+            try wait(&events.txdsent);
+            for (data) |x| {
+                registers.txd = x;
+                try wait(&events.txdsent);
+            }
+            tasks.stop = 1;
+        }
+
+        pub fn readBlocking(device_address: u32, device_register_index: u32, data: []u8) !void {
+            device_addresses.device_address = device_address;
+            tasks.starttx = 1;
+            registers.txd = device_register_index;
+            try wait(&events.txdsent);
+            tasks.startrx = 1;
+            var i: u32 = 0;
+            while (i < data.len) : (i += 1) {
+                try wait(&events.rxready);
+                if (i == data.len - 1) {
+                    tasks.stop = 1;
+                }
+                data[i] = @truncate(u8, registers.rxd);
+            }
+        }
+
+        fn wait(event: *volatile u32) !void {
+            const start = Timer0.capture();
+            while (true) {
+                if (event.* != 0) {
+                    event.* = 0;
+                    return;
+                }
+                if (errorsrc_registers.errorsrc != 0) {
+                    return error.I2cErrorSourceRegister;
+                }
+                if (Timer0.capture() -% start > 500 * 1000) {
+                    return error.I2cTimeExpired;
+                }
+            }
+        }
+
+        pub const device_addresses = mmio(instance_address + 0x588, extern struct {
+             device_address: u32,
+        });
+
+        pub const events = mmio(instance_address + 0x104, extern struct {
+            stopped: u32,
+            rxready: u32,
+            unused1: [4]u32,
+            txdsent: u32,
+            unused2: [1]u32,
+            error_event: u32,
+            unused3: [4]u32,
+            byte_break: u32,
+        });
+
+        pub const frequencies = struct {
+            pub const K100 = 0x01980000;
+            pub const K250 = 0x04000000;
+            pub const K400 = 0x06680000;
+        };
+
+        pub const errorsrc_registers = mmio(instance_address + 0x4c4, extern struct {
+             errorsrc: u32,
+        });
+
+        pub const errorsrc_masks = struct {
+            pub const overrun = 1 << 0;
+            pub const address_nack = 1 << 1;
+            pub const data_nack = 1 << 2;
+        };
+
+        pub const registers = mmio(instance_address + 0x500, extern struct {
+             enable: u32,
+             unused1: [1]u32,
+             pselscl: u32,
+             pselsda: u32,
+             unused2: [2]u32,
+             rxd: u32,
+             txd: u32,
+             unused3: [1]u32,
+             frequency: u32,
+        });
+
+        pub const short_cuts = mmio(instance_address + 0x200, extern struct {
+            shorts: u32,
+        });
+
+        pub const tasks = mmio(instance_address + 0x000, extern struct {
+            startrx: u32,
+            unused1: [1]u32,
+            starttx: u32,
+            unused2: [2]u32,
+            stop: u32,
+            unused3: [1]u32,
+            suspend_task: u32,
+            resume_task: u32,
+        });
+    };
+}
 
 pub const LedMatrix = struct {
     pub var max_elapsed: u32 = undefined;
@@ -270,6 +431,21 @@ pub const Rng = struct {
     });
 };
 
+pub const Temperature = struct {
+    pub const events = mmio(0x4000c100, extern struct {
+        data_ready: u32,
+    });
+
+    pub const registers = mmio(0x4000c508, extern struct {
+        temperature: u32,
+    });
+
+    pub const tasks = mmio(0x4000c000, extern struct {
+        start: u32,
+        stop: u32,
+    });
+};
+
 pub const Terminal = struct {
     pub fn attribute(n: u32) void {
         pair(n, 0, "m");
@@ -353,6 +529,12 @@ pub const TimeKeeper = struct {
     fn reset(self: *TimeKeeper) void {
         self.start_time = self.capture();
     }
+
+    fn wait(self: *TimeKeeper) void {
+        while (!self.isFinished()) {
+        }
+        self.reset();
+    }
 };
 
 pub fn TimerInstance(instance_address: u32) type {
@@ -367,6 +549,14 @@ pub fn TimerInstance(instance_address: u32) type {
             registers.bit_mode = if (instance_address == 0x40008000) @as(u32, 0x3) else 0x0;
             registers.prescaler = if (instance_address == 0x40008000) @as(u32, 4) else 9;
             tasks.start = 1;
+            const now = capture();
+            var i: u32 = 0;
+            while (capture() == now) : (i += 1) {
+                if (i == 1000) {
+                    panicf("timer {} is not responding", .{instance_address});
+                }
+            }
+            // panicf("timer {} responded {} now {} capture {}", .{instance_address, i, now, capture()});
         }
 
         pub const capture_compare_registers = mmio(instance_address + 0x540, [4]u32);
@@ -518,6 +708,31 @@ pub const Uart = struct {
     });
 };
 
+pub const Uicr = struct {
+    pub fn dump() void {
+        for (contents) |word, i| {
+            log("{x:2} {x:8}", .{ i * 4, word });
+        }
+    }
+
+    pub const contents = @intToPtr(*[64]u32, 0x10001000);
+};
+
+pub const Wdt = struct {
+    pub const reload_request_registers = mmio(0x40010600, extern struct {
+        reload_request: [8]u32,
+    });
+
+    pub const registers = mmio(0x40010504, extern struct {
+        counter_reset_value: u32,
+        reload_rewuest_enable: u32,
+    });
+
+    pub const tasks = mmio(0x40010000, extern struct {
+        start: u32,
+    });
+};
+
 pub fn hangf(comptime format: []const u8, args: var) noreturn {
     log(format, args);
     Uart.drainTxQueue();
@@ -538,8 +753,36 @@ pub fn panicf(comptime format: []const u8, args: var) noreturn {
         hangf("\npanicked during panic", .{});
     }
     Exceptions.already_panicking = true;
-    log("\npanic: " ++ format, args);
+    log("\npanicf(): " ++ format, args);
+    var it = std.debug.StackIterator.init(null, null);
+    while (it.next()) |stacked_address| {
+        dumpReturnAddress(stacked_address - 1);
+    }
     hangf("panic completed", .{});
+}
+
+fn dumpReturnAddress(return_address: usize) void {
+    var symbol_index: usize = 0;
+    var line: [] const u8 = "";
+    var i: u32 = 0;
+    while (i < symbols.len) {
+        var j: u32 = i;
+        while (symbols[j] != '\n') {
+            j += 1;
+        }
+        const next_line = symbols[i .. j];
+        const symbol_address = fmt.parseUnsigned(usize, next_line[0 .. 8], 16) catch 0;
+        if (symbol_address >= return_address) {
+            break;
+        }
+        line = next_line;
+        i = j + 1;
+    }
+    if (line.len >= 3) {
+        log("{x:5} in {}", .{ return_address, line[3 ..] });
+    } else {
+        log("{x:5}", .{return_address});
+    }
 }
 
 pub fn typicalVectorTable(comptime mission_index: u32) []const u8 {
@@ -556,7 +799,7 @@ pub fn typicalVectorTable(comptime mission_index: u32) []const u8 {
         ".globl mission" ++ mission_string ++ "_vector_table\n" ++
         ".balign 0x80\n" ++
         "mission" ++ mission_string ++ "_vector_table:\n" ++
-        " .long 0x20004000 - 4 // sp top of 16KB ram\n" ++
+        " .long 0x20004000 - 4 // sp top of 16KB ram less reserved word\n" ++
         " .long mission" ++ mission_string ++ "_main\n" ++
         \\ .long lib00_exceptionNumber02
         \\ .long lib00_exceptionNumber03
@@ -643,12 +886,25 @@ const builtin = @import("builtin");
 const fmt = std.fmt;
 const literal = Uart.literal;
 const std = @import("std");
+const symbols = @embedFile("symbols.txt");
 
 extern var __bss_start: u8;
 extern var __bss_end: u8;
+extern var __debug_info_start: u8;
+extern var __debug_info_end: u8;
+extern var __debug_abbrev_start: u8;
+extern var __debug_abbrev_end: u8;
+extern var __debug_str_start: u8;
+extern var __debug_str_end: u8;
+extern var __debug_line_start: u8;
+extern var __debug_line_end: u8;
+extern var __debug_ranges_start: u8;
+extern var __debug_ranges_end: u8;
 
 pub const log = Uart.log;
 pub const ram_u32 = @intToPtr(*volatile [4096]u32, 0x20000000);
+pub const I2c0 = I2cInstance(0x40003000);
+pub const I2c1 = I2cInstance(0x40004000);
 pub const Timer0 = TimerInstance(0x40008000);
 pub const Timer1 = TimerInstance(0x40009000);
 pub const Timer2 = TimerInstance(0x4000a000);

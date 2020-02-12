@@ -218,7 +218,7 @@ const ThrottleActivity = struct {
                     }
                 }
                 const mask: u32 = 0b1111011110111101111011110;
-                const right = if (column % 6 == 0) 0 else LedMatrix.getImage(text[index]) >> @truncate(u5, (5 - column % 6));
+                const right = if (column % 6 == 0) 0 else LedMatrix.getImage(text[index]) >> @truncate(u5, 5 - column % 6);
                 LedMatrix.putImage(LedMatrix.image << 1 & mask | (right & ~mask));
                 column += 1;
             }

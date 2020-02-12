@@ -3,8 +3,9 @@ export fn mission00_main() noreturn {
 
     Bss.prepare();
     Exceptions.prepare();
-    missionMenu();
     Uart.prepare();
+    log("uart prepared", .{});
+    Uart.drainTxQueue();
     Timer0.prepare();
     Timer1.prepare();
     Timer2.prepare();
@@ -18,7 +19,7 @@ export fn mission00_main() noreturn {
     missions[1] = .{ .name = "turn on all leds", .panic = @import("mission01_turn_on_all_leds_without_using_any_libraries.zig").panic, .vector_table = &mission01_vector_table };
     missions[2] = .{ .name = "model railroad wip", .panic = @import("mission02_model_railroad_wip.zig").panic, .vector_table = &mission02_vector_table };
     missions[3] = .{ .name = "model railroad button controlled pwm", .panic = @import("mission03_model_railroad_button_controlled_pwm.zig").panic, .vector_table = &mission03_vector_table };
-    missions[4] = .{ .name = "unassigned", .panic = @import("mission04_unassigned.zig").panic, .vector_table = &mission04_vector_table };
+    missions[4] = .{ .name = "unassigned", .panic = @import("mission04_sensors.zig").panic, .vector_table = &mission04_vector_table };
     missions[5] = .{ .name = "unassigned", .panic = @import("mission05_unassigned.zig").panic, .vector_table = &mission05_vector_table };
     missions[6] = .{ .name = "unassigned", .panic = @import("mission06_unassigned.zig").panic, .vector_table = &mission06_vector_table };
     missions[7] = .{ .name = "unassigned", .panic = @import("mission07_unassigned.zig").panic, .vector_table = &mission07_vector_table };
@@ -206,7 +207,9 @@ export fn mission00_exceptionNumber15() noreturn {
 fn missionMenu() void {
     Gpio.config[@ctz(u32, Gpio.registers_masks.button_a_active_low)] = Gpio.config_masks.input;
     Gpio.config[@ctz(u32, Gpio.registers_masks.button_b_active_low)] = Gpio.config_masks.input;
-    while (Gpio.registers.in & Gpio.registers_masks.button_b_active_low == 0) {}
+    if (!Ficr.isQemu()) {
+        while (Gpio.registers.in & Gpio.registers_masks.button_b_active_low == 0) {}
+    }
 }
 
 pub fn mission00_panic(message: []const u8, trace: ?*builtin.StackTrace) noreturn {
@@ -273,6 +276,7 @@ comptime {
 const Bss = lib.Bss;
 const builtin = @import("builtin");
 const Exceptions = lib.Exceptions;
+const Ficr = lib.Ficr;
 const Gpio = lib.Gpio;
 const LedMatrix = lib.LedMatrix;
 const lib = @import("lib00_basics.zig");

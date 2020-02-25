@@ -1,5 +1,9 @@
-export fn mission01_main() noreturn {
+export fn mission1_main() noreturn {
     turnOnAllLeds();
+    while (true) {}
+}
+
+pub fn panic(message: []const u8, trace: ?*@import("std").builtin.StackTrace) noreturn {
     while (true) {}
 }
 
@@ -14,17 +18,13 @@ fn turnOnAllLeds() void {
     gpio_out_clear.* = all_nine_led_cathode_pins_active_low;
 }
 
-pub fn panic(message: []const u8, trace: ?*@import("builtin").StackTrace) noreturn {
-    while (true) {}
-}
-
 comptime {
     asm (
-        \\.section .text.start.mission01
-        \\.globl mission01_vector_table
+        \\.section .text.start.mission1
+        \\.globl mission1_vector_table
         \\.balign 0x80
-        \\mission01_vector_table:
-        \\ .long 0x20004000 - 4 // sp top of 16KB ram, 4 bytes reserved for mission control
-        \\ .long mission01_main
+        \\mission1_vector_table:
+        \\ .long 0x20004000 // sp top of 16KB ram
+        \\ .long mission1_main
     );
 }

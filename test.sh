@@ -3,7 +3,7 @@ set -e
 
 export PATH=~/zig:$PATH
 
-MISSION_NUMBER=${1:-00}
+MISSION_NUMBER=${1:-0}
 SOURCE=$(ls mission${MISSION_NUMBER}_*.zig)
 ARCH=thumbv6m
 
@@ -16,7 +16,8 @@ zig build -Dmain=$SOURCE
 llvm-objdump -x --source zig-cache/bin/main > main.asm
 grep '^00000000.*:$' main.asm | sed 's/^00000000//' > symbols.txt
 ls -lt symbols.txt
-zig build -Dmain=$SOURCE
+echo did not use newest symbols.txt
+#zig build -Dmain=$SOURCE
 ls -l zig-cache/bin/main.img main.hex
 
 #set +e

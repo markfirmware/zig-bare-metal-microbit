@@ -9,7 +9,7 @@ SECTIONS {
     . = 0x0;
 
     .text : {
-        KEEP(*(.text.start.mission00))
+        KEEP(*(.text.start.mission0))
         KEEP(*(.text.start.*))
         *(.text)
     }

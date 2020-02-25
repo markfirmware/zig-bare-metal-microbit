@@ -31,7 +31,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         REPO=$(basename $GITHUB_REPOSITORY)
-        RELEASE_TAG=$(grep '^const release_tag =' mission00*.zig | sed 's/";//' | sed 's/^.*"//')
+        RELEASE_TAG=$(grep '^const release_tag =' mission0_*.zig | sed 's/";//' | sed 's/^.*"//')
         RELEASE_ASSET=$REPO-$RELEASE_TAG.zip
         pushd release
         echo $RELEASE_TAG > RELEASE.md

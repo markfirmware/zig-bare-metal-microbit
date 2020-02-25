@@ -1,10 +1,7 @@
-pub fn build(b: *Builder) void {
-    const arch = builtin.Arch{ .thumb = builtin.Arch.Arm32.v6m };
-    const environ = builtin.Abi.none;
+pub fn build(b: *std.build.Builder) !void {
     const exec_name = "main";
     const mode = b.standardReleaseOptions();
-    const os = builtin.Os.freestanding;
-    const main = b.option([]const u8, "main", "main file") orelse "mission00_mission_selector.zig";
+    const main = b.option([]const u8, "main", "main file") orelse "mission0_mission_selector.zig";
     const want_display = b.option(bool, "display", "graphics display for qemu") orelse false;
 
     const exe = b.addExecutable(exec_name, main);
@@ -12,7 +9,9 @@ pub fn build(b: *Builder) void {
     exe.installRaw("main.img");
     exe.setBuildMode(mode);
     exe.setLinkerScriptPath("linker.ld");
-    exe.setTarget(arch, os, environ);
+    exe.setTheTarget(try std.Target.parse(.{
+        .arch_os_abi = "thumb-freestanding-none",
+    }));
 
     const run_makehex = b.addSystemCommand(&[_][]const u8{
         "zig", "run", "makehex.zig",
@@ -37,6 +36,4 @@ pub fn build(b: *Builder) void {
     b.default_step.dependOn(&run_makehex.step);
 }
 
-const Builder = std.build.Builder;
-const builtin = @import("builtin");
 const std = @import("std");

@@ -1,4 +1,4 @@
-export fn mission03_main() noreturn {
+export fn mission2_main() noreturn {
     Bss.prepare();
     Uart.prepare();
     Timer0.prepare();
@@ -218,7 +218,7 @@ const ThrottleActivity = struct {
                     }
                 }
                 const mask: u32 = 0b1111011110111101111011110;
-                const right = if (column % 6 == 0) 0 else LedMatrix.getImage(text[index]) >> @truncate(u5, (5 - column % 6));
+                const right = if (column % 6 == 0) 0 else LedMatrix.getImage(text[index]) >> @truncate(u5, 5 - column % 6);
                 LedMatrix.putImage(LedMatrix.image << 1 & mask | (right & ~mask));
                 column += 1;
             }
@@ -328,6 +328,9 @@ const TerminalActivity = struct {
                 'B' => {
                     ThrottleActivity.buttons[1].toggleSimulated();
                 },
+                3 => {
+                    SystemControlBlock.requestSystemReset();
+                },
                 12 => {
                     keyboard_column = 1;
                     TerminalActivity.prev_led_image = 0;
@@ -379,10 +382,10 @@ const TerminalActivity = struct {
 };
 
 comptime {
-    asm (typicalVectorTable(mission));
+    const mission_id = 2;
+    asm (typicalVectorTable(mission_id));
 }
 
-const mission = 3;
 const status_display_lines = 6 + 5;
 
-usingnamespace @import("use00_typical_mission.zig").typical;
+usingnamespace @import("lib_basics.zig").typical;

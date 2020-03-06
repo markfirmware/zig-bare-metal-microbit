@@ -188,8 +188,7 @@ pub const lib = struct {
             }
 
             pub fn readBlockingPanic(device_address: u32, data: []u8, first: u32, last: u32) void {
-                if (readBlocking(device_address, data, first, last)) |_| {
-                } else |err| {
+                if (readBlocking(device_address, data, first, last)) |_| {} else |err| {
                     panicf("i2c device 0x{x} read {} errorsrc 0x{x}", .{ device_address, err, I2c0.errorsrc_registers.errorsrc });
                 }
             }
@@ -224,8 +223,7 @@ pub const lib = struct {
             }
 
             pub fn writeBlockingPanic(device_address: u32, data: []u8, first: u32, last: u32) void {
-                if (writeBlocking(device_address, data, first, last)) |_| {
-                } else |err| {
+                if (writeBlocking(device_address, data, first, last)) |_| {} else |err| {
                     panicf("i2c device 0x{x} write {} errorsrc 0x{x}", .{ device_address, err, I2c0.errorsrc_registers.errorsrc });
                 }
             }

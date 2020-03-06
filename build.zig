@@ -9,9 +9,12 @@ pub fn build(b: *std.build.Builder) !void {
     exe.installRaw("main.img");
     exe.setBuildMode(mode);
     exe.setLinkerScriptPath("linker.ld");
-    exe.setTheTarget(try std.Target.parse(.{
-        .arch_os_abi = "thumb-freestanding-none",
-    }));
+    exe.setTarget(.{
+        .cpu_arch = .thumb,
+        .os_tag = .freestanding,
+        .abi = .none,
+        .cpu_model = .{ .explicit = &std.Target.arm.cpu.cortex_m0 },
+    });
 
     const run_makehex = b.addSystemCommand(&[_][]const u8{
         "zig", "run", "makehex.zig",

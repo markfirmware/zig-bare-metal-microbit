@@ -40,7 +40,7 @@ fn writeRecord(file: fs.File, offset: usize, code: u8, bytes: []u8) !void {
     }
     record[record.len - 1] = checksum;
     var line_buf: [1 + record_buf.len * 2 + 1]u8 = undefined;
-    try file.write(try fmt.bufPrint(&line_buf, ":{X}\n", .{record}));
+    _ = try file.write(try fmt.bufPrint(&line_buf, ":{X}\n", .{record}));
 }
 
 const assert = std.debug.assert;

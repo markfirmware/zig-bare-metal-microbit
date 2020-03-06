@@ -46,11 +46,21 @@ const Accel = struct {
             } else {
                 const direction = (orientation & orientation_register_mask_direction) >> @ctz(u5, orientation_register_mask_direction);
                 switch (direction) {
-                    0 => { log("up", .{}); },
-                    1 => { log("down", .{}); },
-                    2 => { log("right", .{}); },
-                    3 => { log("left", .{}); },
-                    else => { unreachable; },
+                    0 => {
+                        log("up", .{});
+                    },
+                    1 => {
+                        log("down", .{});
+                    },
+                    2 => {
+                        log("right", .{});
+                    },
+                    3 => {
+                        log("left", .{});
+                    },
+                    else => {
+                        unreachable;
+                    },
                 }
             }
         }

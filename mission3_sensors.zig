@@ -35,11 +35,11 @@ const Accel = struct {
         I2c0.readBlockingPanic(device_address, &data_buf, orientation_register, orientation_register);
         const orientation = data_buf[orientation_register];
         if (orientation & orientation_register_mask_changed != 0) {
-            literal("orientation: 0x{x} ", .{orientation});
+            format("orientation: 0x{x} ", .{orientation});
             if (orientation & orientation_register_mask_forward_backward != 0) {
-                literal("forward ", .{});
+                format("forward ", .{});
             } else {
-                literal("backward ", .{});
+                format("backward ", .{});
             }
             if (orientation & orientation_register_mask_z_lock_out != 0) {
                 log("up/down/left/right is unknown", .{});

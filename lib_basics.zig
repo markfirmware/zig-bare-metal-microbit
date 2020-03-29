@@ -511,8 +511,8 @@ pub const lib = struct {
             Uart.writeText(csi ++ "?25l");
         }
 
-        pub fn line(comptime format: []const u8, args: var) void {
-            literal(format, args);
+        pub fn line(comptime fmt: []const u8, args: var) void {
+            format(fmt, args);
             pair(0, 0, "K");
             Uart.writeText("\n");
         }
@@ -523,13 +523,13 @@ pub const lib = struct {
 
         pub fn pair(a: u32, b: u32, letter: []const u8) void {
             if (a <= 1 and b <= 1) {
-                literal("{}{}", .{ csi, letter });
+                format("{}{}", .{ csi, letter });
             } else if (b <= 1) {
-                literal("{}{}{}", .{ csi, a, letter });
+                format("{}{}{}", .{ csi, a, letter });
             } else if (a <= 1) {
-                literal("{};{}{}", .{ csi, b, letter });
+                format("{};{}{}", .{ csi, b, letter });
             } else {
-                literal("{}{};{}{}", .{ csi, a, b, letter });
+                format("{}{};{}{}", .{ csi, a, b, letter });
             }
         }
 
@@ -645,6 +645,7 @@ pub const lib = struct {
     }
 
     pub const Uart = struct {
+        var stream: std.io.OutStream(Uart, stream_error, writeTextError) = undefined;
         var tx_busy: bool = undefined;
         var tx_queue: [3]u8 = undefined;
         var tx_queue_read: usize = undefined;
@@ -674,8 +675,8 @@ pub const lib = struct {
             return events.rx_ready == 1;
         }
 
-        pub fn literal(comptime format: []const u8, args: var) void {
-            fmt.format({}, error{}, uart_logBytes, format, args) catch |e| switch (e) {};
+        pub fn format(comptime fmt: []const u8, args: var) void {
+            std.fmt.format(stream, fmt, args) catch |_| {};
         }
 
         pub fn loadTxd() void {
@@ -690,8 +691,8 @@ pub const lib = struct {
             }
         }
 
-        pub fn log(comptime format: []const u8, args: var) void {
-            literal(format ++ "\n", args);
+        pub fn log(comptime fmt: []const u8, args: var) void {
+            format(fmt ++ "\n", args);
         }
 
         pub fn readByte() u8 {
@@ -728,6 +729,13 @@ pub const lib = struct {
                 }
             }
         }
+
+        pub fn writeTextError(context: Uart, buffer: []const u8) stream_error!u32 {
+            writeText(buffer);
+            return buffer.len;
+        }
+
+        const stream_error = error{UartError};
 
         const events = mmio(0x40002108, extern struct {
             rx_ready: u32,
@@ -790,8 +798,8 @@ pub const lib = struct {
         });
     };
 
-    pub fn hangf(comptime format: []const u8, args: var) noreturn {
-        log(format, args);
+    pub fn hangf(comptime fmt: []const u8, args: var) noreturn {
+        log(fmt, args);
         Uart.drainTxQueue();
         while (true) {}
     }
@@ -808,13 +816,13 @@ pub const lib = struct {
         }
     }
 
-    pub fn panicf(comptime format: []const u8, args: var) noreturn {
+    pub fn panicf(comptime fmt: []const u8, args: var) noreturn {
         @setCold(true);
         if (Exceptions.already_panicking) {
             hangf("\npanicked during panic", .{});
         }
         Exceptions.already_panicking = true;
-        log("\npanicf(): " ++ format, args);
+        log("\npanicf(): " ++ fmt, args);
         var it = std.debug.StackIterator.init(null, null);
         while (it.next()) |stacked_address| {
             dumpReturnAddress(stacked_address - 1);
@@ -832,7 +840,7 @@ pub const lib = struct {
                 j += 1;
             }
             const next_line = symbols[i..j];
-            const symbol_address = fmt.parseUnsigned(usize, next_line[0..8], 16) catch 0;
+            const symbol_address = std.fmt.parseUnsigned(usize, next_line[0..8], 16) catch 0;
             if (symbol_address >= return_address) {
                 break;
             }
@@ -877,10 +885,6 @@ pub const lib = struct {
             \\ .long lib_exceptionNumber14
             \\ .long lib_exceptionNumber15
         ;
-    }
-
-    fn uart_logBytes(context: void, bytes: []const u8) error{}!void {
-        Uart.writeText(bytes);
     }
 
     export fn lib_exceptionNumber01() noreturn {
@@ -944,8 +948,7 @@ pub const lib = struct {
     }
 
     const builtin = std.builtin;
-    const fmt = std.fmt;
-    const literal = Uart.literal;
+    const format = Uart.format;
     const std = @import("std");
     const symbols = @embedFile("symbols.txt");
 
@@ -979,11 +982,11 @@ pub const typical = struct {
     pub const ClockManagement = lib.ClockManagement;
     pub const Exceptions = lib.Exceptions;
     pub const Ficr = lib.Ficr;
+    pub const format = Uart.format;
     pub const Gpio = lib.Gpio;
     pub const Gpiote = lib.Gpiote;
     pub const I2c0 = lib.I2c0;
     pub const lib_basics = lib;
-    pub const literal = Uart.literal;
     pub const log = Uart.log;
     pub const math = std.math;
     pub const mem = std.mem;

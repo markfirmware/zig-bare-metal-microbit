@@ -9,7 +9,7 @@ ARCH=thumbv6m
 
 echo $SOURCE
 echo zig version $(zig version)
-zig fmt $SOURCE
+zig fmt *.zig
 touch symbols.txt
 zig build -Dmain=$SOURCE
 
@@ -25,5 +25,5 @@ ls -l zig-cache/bin/main.img main.hex
 #grep 'q[0-9].*#' main.asm | egrep -v '#(-|)(16|32|48|64|80|96|112|128)'
 #set -e
 
-cp main.hex ~/microbit1/ & cp main.hex ~/microbit2/
+cp main.hex ~/microbit1/ # && cp main.hex ~/microbit2/
 sync

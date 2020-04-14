@@ -1,9 +1,9 @@
-export fn mission2_main() noreturn {
+fn main() callconv(.C) noreturn {
     Bss.prepare();
     Uart.prepare();
-    Timer0.prepare();
-    Timer1.prepare();
-    Timer2.prepare();
+    Timer(0).prepare();
+    Timer(1).prepare();
+    Timer(2).prepare();
     LedMatrix.prepare();
 
     CycleActivity.prepare();
@@ -43,9 +43,8 @@ const CycleActivity = struct {
     fn update() void {
         LedMatrix.update();
         cycle_counter += 1;
-        const new_cycle_start = Timer0.capture();
-        if (up_timer.isFinished()) {
-            up_timer.reset();
+        const new_cycle_start = Timer(0).captureAndRead();
+        if (up_timer.isFinishedThenReset()) {
             up_time_seconds += 1;
             cycles_per_second = cycle_counter -% last_cycle_counter;
             last_cycle_counter = cycle_counter;
@@ -59,7 +58,6 @@ const CycleActivity = struct {
 };
 
 const ThrottleActivity = struct {
-    var buttons: [2]Button = undefined;
     var pwm_loop_back_counter: u32 = undefined;
 
     fn loopBackPercent() u32 {
@@ -69,105 +67,110 @@ const ThrottleActivity = struct {
     fn prepare() void {
         pwm_loop_back_counter = 0;
         Throttle.prepare();
-        for (buttons) |*b, i| {
-            b.prepare(i);
-        }
+        button(0).prepare();
+        button(1).prepare();
         LedScroller.prepare();
         redraw();
         update();
     }
 
     fn redraw() void {
-        for (buttons) |*b| {
-            b.draw();
-        }
+        button(0).draw();
+        button(1).draw();
     }
 
     fn releaseSimulatedButtons() void {
-        for (buttons) |*b| {
-            if (b.is_simulation_pressed) {
-                b.toggleSimulated();
+        comptime var i: u32 = 0;
+        while (i < 2) : (i += 1) {
+            if (button(i).is_simulation_pressed) {
+                button(i).toggleSimulated();
             }
         }
     }
 
     fn update() void {
-        if (Gpio.registers.in & Gpio.registers_masks.ring0 != 0) {
+        if (Pins.ring0.read() == 1) {
             pwm_loop_back_counter += 1;
         }
-        for (buttons) |*button| {
-            button.update();
-        }
+        button(0).update();
+        button(0).update();
         LedScroller.update();
     }
 
-    const Button = struct {
-        down_count: u32,
-        index: u32,
-        is_pressed: bool,
-        is_simulation_pressed: bool,
-        mask: u32,
-        up_count: u32,
+    fn button(index: u32) type {
+        return struct {
+            var down_count: u32 = undefined;
+            var elapsed: [2]u32 = undefined;
+            var event_time: u32 = undefined;
+            var is_pressed: bool = undefined;
+            var is_simulation_pressed: bool = undefined;
+            var up_count: u32 = undefined;
 
-        fn draw(self: *Button) void {
-            Terminal.hideCursor();
-            Terminal.move(6, 10 + self.index * 31);
-            if (self.is_pressed) {
-                Terminal.attribute(44);
-                Uart.writeText(self.name());
-                Uart.writeText(" down");
-                Terminal.attribute(0);
-            } else {
-                Uart.writeText(self.name());
-                Uart.writeText("     ");
-            }
-        }
-
-        fn name(self: *Button) []const u8 {
-            return if (self.index == 0) "A" else "B";
-        }
-
-        fn prepare(self: *Button, index: u32) void {
-            self.down_count = 0;
-            self.index = index;
-            self.is_pressed = false;
-            self.is_simulation_pressed = false;
-            self.up_count = 0;
-            if (index == 0) {
-                self.mask = Gpio.registers_masks.button_a_active_low;
-            } else if (index == 1) {
-                self.mask = Gpio.registers_masks.button_b_active_low;
-            }
-            Gpio.config[@ctz(u32, self.mask)] = Gpio.config_masks.input;
-            self.update();
-        }
-
-        fn toggleSimulated(self: *Button) void {
-            self.is_simulation_pressed = !self.is_simulation_pressed;
-            self.update();
-        }
-
-        fn update(self: *Button) void {
-            const new = Gpio.registers.in & self.mask == 0 or self.is_simulation_pressed;
-            if (new != self.is_pressed) {
-                self.is_pressed = new;
-                self.draw();
-                TerminalActivity.restoreInputLine();
-                if (self.is_pressed) {
-                    self.down_count += 1;
-                    if (self.index == 0 and !buttons[1].is_pressed) {
-                        Throttle.movePercent("button A pressed", -5);
-                    } else if (self.index == 1 and !buttons[0].is_pressed) {
-                        Throttle.movePercent("button B pressed", 5);
-                    } else {
-                        Throttle.setPercent("Both buttons A and B pressed (reset throttle to 0%)", 0);
-                    }
+            fn draw() void {
+                Terminal.hideCursor();
+                Terminal.move(6, 10 + index * 31);
+                if (is_pressed) {
+                    Terminal.attribute(44);
+                    Uart.writeText(name());
+                    Uart.writeText(" down");
+                    Terminal.attribute(0);
                 } else {
-                    self.up_count += 1;
+                    Uart.writeText(name());
+                    Uart.writeText("     ");
                 }
             }
-        }
-    };
+
+            fn name() []const u8 {
+                return if (index == 0) "A" else "B";
+            }
+
+            fn prepare() void {
+                down_count = 0;
+                elapsed[0] = 0x7fffffff;
+                elapsed[1] = 0x7fffffff;
+                event_time = 0;
+                is_pressed = false;
+                is_simulation_pressed = false;
+                up_count = 0;
+                pin().connectInput();
+                update();
+            }
+
+            fn pin() type {
+                return if (index == 0) Pins.buttons.a else Pins.buttons.b;
+            }
+
+            fn toggleSimulated() void {
+                is_simulation_pressed = !is_simulation_pressed;
+                update();
+            }
+
+            fn update() void {
+                const new = (pin().read() == 0) or is_simulation_pressed;
+                if (new != is_pressed) {
+                    var now = Timer(0).captureAndRead();
+                    const up_or_down = if (new) @as(usize, 1) else 0;
+                    elapsed[up_or_down] = math.min(elapsed[up_or_down], now -% event_time);
+                    event_time = now;
+                    is_pressed = new;
+                    draw();
+                    TerminalActivity.restoreInputLine();
+                    if (is_pressed) {
+                        down_count += 1;
+                        if (index == 0 and !button(1).is_pressed) {
+                            Throttle.movePercent("button A pressed", -5);
+                        } else if (index == 1 and !button(0).is_pressed) {
+                            Throttle.movePercent("button B pressed", 5);
+                        } else {
+                            Throttle.setPercent("Both buttons A and B pressed (reset throttle to 0%)", 0);
+                        }
+                    } else {
+                        up_count += 1;
+                    }
+                }
+            }
+        };
+    }
 
     const LedScroller = struct {
         var column: u32 = undefined;
@@ -184,8 +187,7 @@ const ThrottleActivity = struct {
         }
 
         fn update() void {
-            if (timer.isFinished()) {
-                timer.reset();
+            if (timer.isFinishedThenReset()) {
                 var index = column / 6;
                 if (column % 6 == 0) {
                     if (index == text.len) {
@@ -236,12 +238,13 @@ const ThrottleActivity = struct {
 
         fn prepare() void {
             percent = 0;
-            Gpio.config[02] = Gpio.config_masks.output;
-            Gpio.config[03] = Gpio.config_masks.input;
-            Ppi.setChannelEventAndTask(0, &Timer1.events.compare[0], &Gpiote.tasks.out[0]);
-            Ppi.setChannelEventAndTask(1, &Timer1.events.compare[1], &Gpiote.tasks.out[0]);
-            Timer1.short_cuts.shorts = 0x002;
-            Timer1.capture_compare_registers[1] = pwm_width_ticks_max;
+            Pins.ring1.connectIo();
+            Pins.ring0.connectInput();
+            Ppi.setChannelEventAndTask(0, Timer(1).events.compare[0], Gpiote.tasks.out[0]);
+            Ppi.setChannelEventAndTask(1, Timer(1).events.compare[1], Gpiote.tasks.out[0]);
+            Timer(1).registers.shorts.write(0x002);
+            // Timer(1).setShorts(compare1, clear);
+            Timer(1).registers.capture_compare[1].write(pwm_width_ticks_max);
         }
 
         fn setPercent(message: []const u8, new: i32) void {
@@ -252,22 +255,22 @@ const ThrottleActivity = struct {
                 log("{}: throttle remains at {}%", .{ message, percent });
             }
             percent = new_percent;
-            Timer1.tasks.stop = 1;
+            Timer(1).tasks.stop.do();
             const ppi_channels_0_and_1_mask = 1 << 0 | 1 << 1;
-            Ppi.registers.channel_enable_clear = ppi_channels_0_and_1_mask;
-            Gpiote.config[0] = Gpiote.config_masks.disable;
-            Gpio.registers.out_clear = Gpio.registers_masks.ring1;
+            Ppi.registers.channel_enable.clear(ppi_channels_0_and_1_mask);
+            Gpiote.registers.config[0].write(.{ .mode = .Disabled });
+            Pins.ring1.clear();
             pwm_width_ticks = 0;
             if (percent == 100) {
-                Gpio.registers.out_set = Gpio.registers_masks.ring1;
+                Pins.ring1.set();
             } else if (percent > 0) {
                 pwm_width_ticks = 1000 * (100 - percent) * pwm_width_ticks_max / (100 * 1000);
-                Timer1.capture_compare_registers[0] = pwm_width_ticks;
-                Gpio.registers.out_clear = Gpio.registers_masks.ring1;
-                Gpiote.config[0] = 0x30203;
-                Ppi.registers.channel_enable_set = ppi_channels_0_and_1_mask;
-                Timer1.tasks.clear = 1;
-                Timer1.tasks.start = 1;
+                Timer(1).registers.capture_compare[0].write(pwm_width_ticks);
+                Pins.ring1.clear();
+                Gpiote.registers.config[0].write(.{ .mode = .Task, .psel = Pins.ring1.id, .polarity = .Toggle, .outinit = .Low });
+                Ppi.registers.channel_enable.set(ppi_channels_0_and_1_mask);
+                Timer(1).tasks.clear.do();
+                Timer(1).tasks.start.do();
             }
         }
     };
@@ -307,26 +310,26 @@ const TerminalActivity = struct {
                 },
                 'a' => {
                     ThrottleActivity.releaseSimulatedButtons();
-                    ThrottleActivity.buttons[0].toggleSimulated();
-                    ThrottleActivity.buttons[0].toggleSimulated();
+                    ThrottleActivity.button(0).toggleSimulated();
+                    ThrottleActivity.button(0).toggleSimulated();
                 },
                 'b' => {
                     ThrottleActivity.releaseSimulatedButtons();
-                    ThrottleActivity.buttons[1].toggleSimulated();
-                    ThrottleActivity.buttons[1].toggleSimulated();
+                    ThrottleActivity.button(1).toggleSimulated();
+                    ThrottleActivity.button(1).toggleSimulated();
                 },
                 'c' => {
                     ThrottleActivity.releaseSimulatedButtons();
-                    ThrottleActivity.buttons[0].toggleSimulated();
-                    ThrottleActivity.buttons[1].toggleSimulated();
-                    ThrottleActivity.buttons[0].toggleSimulated();
-                    ThrottleActivity.buttons[1].toggleSimulated();
+                    ThrottleActivity.button(0).toggleSimulated();
+                    ThrottleActivity.button(1).toggleSimulated();
+                    ThrottleActivity.button(0).toggleSimulated();
+                    ThrottleActivity.button(1).toggleSimulated();
                 },
                 'A' => {
-                    ThrottleActivity.buttons[0].toggleSimulated();
+                    ThrottleActivity.button(0).toggleSimulated();
                 },
                 'B' => {
-                    ThrottleActivity.buttons[1].toggleSimulated();
+                    ThrottleActivity.button(1).toggleSimulated();
                 },
                 3 => {
                     SystemControlBlock.requestSystemReset();
@@ -352,8 +355,9 @@ const TerminalActivity = struct {
         if (now >= prev_now + 1) {
             Terminal.hideCursor();
             Terminal.move(1, 1);
-            Terminal.line("up {:3}s cycle {}Hz {}us max {}us led max {}us", .{ CycleActivity.up_time_seconds, CycleActivity.cycles_per_second, CycleActivity.cycle_time, CycleActivity.max_cycle_time, LedMatrix.max_elapsed });
+            Terminal.line("up {:3}s cycle {}Hz {}us max {}us led max {}us", .{ CycleActivity.up_time_seconds, CycleActivity.cycles_per_second, CycleActivity.cycle_time, CycleActivity.max_cycle_time, LedMatrix.scan_timer.max_elapsed });
             Terminal.line("throttle {:2}% pwm {:2}% cc0 {} raw {}", .{ ThrottleActivity.Throttle.percent, ThrottleActivity.loopBackPercent(), ThrottleActivity.Throttle.pwm_width_ticks, ThrottleActivity.pwm_loop_back_counter });
+            Terminal.line("button a up {}us down {}us b up {}us down {}us", .{ ThrottleActivity.button(0).elapsed[0], ThrottleActivity.button(0).elapsed[1], ThrottleActivity.button(1).elapsed[0], ThrottleActivity.button(1).elapsed[1] });
             Terminal.showCursor();
             restoreInputLine();
             prev_now = now;
@@ -381,11 +385,13 @@ const TerminalActivity = struct {
     }
 };
 
-comptime {
-    const mission_id = 2;
-    asm (typicalVectorTable(mission_id));
-}
+const status_display_lines = 6 + 6;
 
-const status_display_lines = 6 + 5;
+pub const mission_number: u32 = 2;
+
+pub const vector_table linksection(".vector_table") = simpleVectorTable(main);
+comptime {
+    @export(vector_table, .{ .name = "vector_table_mission2" });
+}
 
 usingnamespace @import("lib_basics.zig").typical;

@@ -1,20 +1,66 @@
-export fn mission0_main() noreturn {
+const Key = union(enum) {
+    Home: void,
+    End: void,
+    Up: void,
+    Down: void,
+    Left: void,
+    Right: void,
+    F: u8,
+    U8: u8,
+    Seq: Args,
+    fn ctrl(byte: u8) Key {
+        return Key{ .U8 = byte & 0x3f };
+    }
+    fn f(n: u8) Key {
+        return Key{ .F = n };
+    }
+    fn k(byte: u8) Key {
+        return Key{ .U8 = byte };
+    }
+    const Args = struct {
+        args: [3]?u32 = undefined,
+        len: u8 = 0,
+        terminator: u8 = undefined,
+        fn add(self: *Args, n: ?u32) void {
+            self.args[self.len] = n;
+            self.len += 1;
+        }
+        pub fn format(self: Args, comptime fmt: []const u8, options: std.fmt.FormatOptions, out_stream: var) !void {
+            var i: u32 = 0;
+            while (i < self.len) : (i += 1) {
+                if (self.args[i]) |x| {
+                    try out_stream.print("{}", .{x});
+                } else {
+                    try out_stream.print("null", .{});
+                }
+                if (i < self.len - 1) {
+                    try out_stream.print(";", .{});
+                }
+            }
+            const s = [_]u8{self.terminator};
+            try out_stream.print("{}", .{s});
+        }
+    };
+    const Esc = k(27);
+};
+
+fn main() callconv(.C) noreturn {
     Bss.prepare();
     Exceptions.prepare();
     Mission.prepare();
     Uart.prepare();
-    Timer0.prepare();
-    Timer1.prepare();
-    Timer2.prepare();
+    Timer(0).prepare();
+    Timer(1).prepare();
+    Timer(2).prepare();
     LedMatrix.prepare();
 
     CycleActivity.prepare();
     KeyboardActivity.prepare();
     StatusActivity.prepare();
 
-    Mission.register(&mission1_vector_table, "turn on all leds without libraries", "mission1_turn_on_all_leds_without_libraries.zig");
-    Mission.register(&mission2_vector_table, "model railroad motor pwm controlled by buttons", "mission2_model_railroad_pwm.zig");
-    Mission.register(&mission3_vector_table, "sensors - temperature,  orientation", "mission3_sensors.zig");
+    Mission.register("turn on all leds without libraries", "mission1_turn_on_all_leds_without_libraries.zig");
+    Mission.register("model railroad motor pwm controlled by buttons", "mission2_model_railroad_pwm.zig");
+    Mission.register("sensors - temperature,  orientation", "mission3_sensors.zig");
     log("available missions:", .{});
     for (Mission.missions) |*m, i| {
         log("{}. {}", .{ i + 1, m.title });
@@ -47,7 +93,7 @@ const CycleActivity = struct {
     fn update() void {
         LedMatrix.update();
         cycle_counter += 1;
-        const new_cycle_start = Timer0.capture();
+        const new_cycle_start = Timer(0).captureAndRead();
         if (new_cycle_start -% last_second_ticks >= 1000 * 1000) {
             up_time_seconds += 1;
             last_second_ticks = new_cycle_start;
@@ -62,16 +108,97 @@ const CycleActivity = struct {
 
 const KeyboardActivity = struct {
     var column: u32 = undefined;
+    var escape: []u8 = undefined;
+    var escape_buf: [20]u8 = undefined;
+    var escape_elapsed_time: u32 = undefined;
+    var escape_ready: bool = undefined;
+    var max: u32 = undefined;
+    var pending: ?u8 = undefined;
+
+    fn getEscape() ?[]u8 {
+        if (escape_ready) {
+            escape_ready = false;
+            return escape;
+        } else {
+            return null;
+        }
+    }
+
+    fn waitEscape() []u8 {
+        const start = Timer(0).captureAndRead();
+        while (true) {
+            Uart.loadTxd();
+            if (getEscape()) |e| {
+                return e;
+            }
+            update();
+            if (Timer(0).captureAndRead() -% start >= 10 * 1000) {
+                return "";
+            }
+        }
+    }
 
     fn prepare() void {
         column = 1;
+        escape_ready = false;
+        pending = null;
+    }
+
+    fn receiveEscape() void {
+        escape = "";
+        var start = Timer(0).captureAndRead();
+        var last = start;
+        max = 0;
+        var now: u32 = undefined;
+        while (!escape_ready) {
+            now = Timer(0).captureAndRead();
+            if (Uart.isReadByteReady()) {
+                const byte = Uart.readByte();
+                max = math.max(max, now -% last);
+                last = now;
+                if (byte == 27) {
+                    if (escape.len == 0) {
+                        setPending(27);
+                    } else {
+                        log("escape interrupted {} {} {}us {}us", .{ escape.len, escape, now -% start, max });
+                    }
+                    escape = "";
+                } else {
+                    escape = escape_buf[0 .. escape.len + 1];
+                    escape[escape.len - 1] = byte;
+                    if (byte != 'O' and (byte == '~' or byte >= 'a' and byte <= 'z' or byte >= 'A' and byte <= 'Z')) {
+                        escape_ready = true;
+                    }
+                }
+            } else {
+                LedMatrix.update();
+            }
+            if (now -% last >= 2 * 1000) {
+                escape_ready = true;
+            }
+        }
+        escape_elapsed_time = now -% start;
+    }
+
+    fn setPending(b: u8) void {
+        if (pending) |p| {
+            log("overrun discarded key {}", .{p});
+        } else {
+            pending = b;
+        }
     }
 
     fn update() void {
-        if (!Uart.isReadByteReady()) {
+        if (escape_ready or !(Uart.isReadByteReady() or pending != null)) {
             return;
         }
-        const byte = Uart.readByte();
+        var byte: u8 = undefined;
+        if (pending) |b| {
+            byte = b;
+            pending = null;
+        } else {
+            byte = Uart.readByte();
+        }
         switch (byte) {
             3 => {
                 SystemControlBlock.requestSystemReset();
@@ -80,8 +207,13 @@ const KeyboardActivity = struct {
                 StatusActivity.redraw();
             },
             27 => {
-                Uart.writeByteBlocking('$');
-                column += 1;
+                receiveEscape();
+            },
+            'b' => {
+                LedMatrix.putImage(0x01ffffff);
+            },
+            'd' => {
+                LedMatrix.putImage(0x00000000);
             },
             '1', '2', '3', '4', '5', '6', '7', '8', '9' => {
                 Mission.missions[byte - '1'].activate();
@@ -99,11 +231,72 @@ const KeyboardActivity = struct {
 };
 
 const StatusActivity = struct {
+    var height: u32 = undefined;
     var prev_now: u32 = undefined;
+    var width: u32 = undefined;
+
+    fn getCursorPositionBlocking() []u8 {
+        Terminal.requestCursorPosition();
+        return KeyboardActivity.waitEscape();
+    }
+
+    fn parseEscape(escape: []u8) ?Key {
+        var key: ?Key = null;
+        if (escape.len == 2 and escape[0] == 'O') {
+            if (escape[1] >= 'P' and escape[1] <= 'S') {
+                key = Key.f(escape[1] - 'P' + 1);
+            }
+        } else if (escape.len == 2 and escape[0] == '[') {
+            switch (escape[1]) {
+                'A' => {
+                    key = Key.Up;
+                },
+                'B' => {
+                    key = Key.Down;
+                },
+                'C' => {
+                    key = Key.Right;
+                },
+                'D' => {
+                    key = Key.Left;
+                },
+                else => {},
+            }
+        } else if (escape.len >= 2 and escape[0] == '[') {
+            var args = Key.Args{};
+            var number: ?u32 = null;
+            var i: u32 = 1;
+            while (i < escape.len and args.len < args.args.len) : (i += 1) {
+                const c = escape[i];
+                if (c >= '0' and c <= '9') {
+                    var j = i + 1;
+                    while (j < escape.len and escape[j] >= '0' and escape[j] <= '9') : (j += 1) {}
+                    number = std.fmt.parseUnsigned(u32, escape[i..j], 10) catch unreachable;
+                    i = j - 1;
+                } else if (c == ';') {
+                    args.add(number);
+                    number = null;
+                } else if (i == escape.len - 1 and (c == '~' or c >= 'a' and c <= 'z' or c >= 'A' and c <= 'Z')) {
+                    args.add(number);
+                    args.terminator = c;
+                    key = Key{ .Seq = args };
+                    break;
+                } else {
+                    break;
+                }
+            }
+        }
+        if (key == null) {
+            log("escape <{}> {}us {}us", .{ escape, KeyboardActivity.escape_elapsed_time, KeyboardActivity.max });
+        }
+        return key;
+    }
 
     fn prepare() void {
         prev_now = CycleActivity.up_time_seconds;
-        redraw();
+        height = 0;
+        width = 0;
+        updateScreenSize();
     }
 
     fn redraw() void {
@@ -115,16 +308,32 @@ const StatusActivity = struct {
 
     fn update() void {
         Uart.loadTxd();
+        if (KeyboardActivity.getEscape()) |escape| {
+            const key = parseEscape(escape);
+            log("{}", .{key});
+        }
         const now = CycleActivity.up_time_seconds;
         if (now >= prev_now + 1) {
             Terminal.hideCursor();
+            updateScreenSize();
             Terminal.move(1, 1);
-            Terminal.line("reset {x} up {:3}s cycle {}us max {}us", .{ Power.registers.reset_reason, CycleActivity.up_time_seconds, CycleActivity.cycle_time, CycleActivity.max_cycle_time });
-            Terminal.line("gpio.in {x:8}", .{Gpio.registers.in & ~@as(u32, 0x0300fff0)});
+            Terminal.line("up {:3}s cycle {}us max {}us", .{ CycleActivity.up_time_seconds, CycleActivity.cycle_time, CycleActivity.max_cycle_time });
+            Terminal.line("screen {}x{}", .{ width, height });
             Terminal.line("", .{});
             Terminal.showCursor();
             restoreInputLine();
             prev_now = now;
+        }
+    }
+
+    fn updateScreenSize() void {
+        Terminal.move(999, 999);
+        if (parseEscape(getCursorPositionBlocking())) |size| {
+            if (size.Seq.terminator == 'R' and (size.Seq.args[0].? != height or size.Seq.args[1].? != width)) {
+                width = size.Seq.args[1].?;
+                height = size.Seq.args[0].?;
+                redraw();
+            }
         }
     }
 };
@@ -136,7 +345,7 @@ fn restoreInputLine() void {
 const Mission = struct {
     title: []const u8,
     panic: fn ([]const u8, ?*builtin.StackTrace) noreturn,
-    vector_table_address: *allowzero u32,
+    vector_table_address: *allowzero const u32,
 
     var missions: []Mission = undefined;
     var missions_buf: [5]Mission = undefined;
@@ -157,26 +366,24 @@ const Mission = struct {
         missions = missions_buf[0..0];
     }
 
-    fn register(vector_table_address: *allowzero u32, comptime title: []const u8, comptime source_file: []const u8) void {
+    fn register(comptime title: []const u8, comptime source_file: []const u8) void {
         missions = missions_buf[0 .. missions.len + 1];
         var m = &missions[missions.len - 1];
         const import = @import(source_file);
         m.title = title;
         m.panic = import.panic;
-        m.vector_table_address = vector_table_address;
+        m.vector_table_address = @ptrCast(*allowzero const u32, &import.vector_table);
     }
 };
-
-comptime {
-    const mission_id = 0;
-    asm (typicalVectorTable(mission_id));
-}
 
 const release_tag = "0.4";
 const status_display_lines = 6 + 5;
 
-extern var mission1_vector_table: u32;
-extern var mission2_vector_table: u32;
-extern var mission3_vector_table: u32;
+pub const mission_number: u32 = 0;
+
+pub const vector_table linksection(".vector_table.primary") = simpleVectorTable(main);
+comptime {
+    @export(vector_table, .{ .name = "vector_table_mission0" });
+}
 
 usingnamespace @import("lib_basics.zig").typical;

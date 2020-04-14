@@ -3,7 +3,7 @@ set -e
 
 export PATH=~/zig:$PATH
 
-MISSION_NUMBER=${1:-00}
+MISSION_NUMBER=${1:-0}
 SOURCE=$(ls mission${MISSION_NUMBER}_*.zig)
 ARCH=thumbv6m
 

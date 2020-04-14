@@ -1,22 +1,120 @@
-export fn mission3_main() noreturn {
+const LightSensor = struct {
+    var cycle_start: u32 = undefined;
+    var low: [3]u32 = undefined;
+    var high: [3]u32 = undefined;
+
+    fn prepare() void {
+        Pins.leds.anodes.clearAll();
+        Pins.leds.cathodes.clearAll();
+        Pins.leds.anodes.direction.setAll();
+        Pins.leds.cathodes.direction.setAll();
+        var i: u32 = 0;
+        while (i < low.len) : (i += 1) {
+            low[i] = 0x7fffffff;
+            high[i] = 0;
+        }
+        cycle_start = Timer(0).captureAndRead();
+    }
+
+    fn update() void {
+        const new_cycle_start = Timer(0).captureAndRead();
+        if (new_cycle_start -% cycle_start >= 500 * 1000) {
+            cycle_start = new_cycle_start;
+            var sum: u32 = 0;
+            var col: u32 = 1;
+            while (col <= 3) : (col += 1) {
+                const ain = col + 4;
+                const column_mask = @as(u32, 0x10) << @truncate(u5, col - 1);
+
+                Adc.registers.enable.write(0);
+                // Adc.registers.config = 2 | (0 << @ctz(u32, Adc.registers_config_masks.refsel)) | (2 << @ctz(u32, Adc.registers_config_masks.inpsel)) | ((@as(u32, 1) << @truncate(u5, ain)) << @ctz(u32, Adc.registers_config_masks.psel));
+                Adc.registers.config.write(.{ .resolution = 2, .refsel = 0, .inpsel = 2, .psel = @as(u8, 1) << @truncate(u3, ain) });
+                Adc.registers.enable.write(1);
+
+                Gpio.registers.out.set(column_mask);
+                TimeKeeper.delay(10 * 1000);
+                Gpio.registers.direction.clear(column_mask);
+                Adc.tasks.start.do();
+                TimeKeeper.delay(5 * 1000);
+                assert(Adc.registers.busy.read() == 0);
+                // while (Adc.registers.busy.read() != 0) {}
+                const result = Adc.registers.result.read();
+                if (result < low[col - 1]) {
+                    low[col - 1] = result;
+                }
+                if (result > high[col - 1]) {
+                    high[col - 1] = result;
+                }
+                var percent: u32 = 0;
+                const range = high[col - 1] - low[col - 1];
+                if (range != 0) {
+                    percent = 100 * (high[col - 1] - result) / range;
+                }
+                format("ain{} {:3}% {}/{}/{} ", .{ ain, percent, low[col - 1], result, high[col - 1] });
+                sum += percent;
+                Gpio.registers.out.clear(column_mask);
+                Gpio.registers.direction.set(column_mask);
+            }
+            log(" {:3}%", .{sum / 3});
+        }
+    }
+};
+
+const LightSensorJustOne = struct {
+    const col: u32 = 1;
+    const ain = col + 4;
+    const column_mask = @as(u32, 0x10) << @truncate(u5, col - 1);
+    var ready = false;
+
+    fn prepare() void {
+        Pins.leds.anodes.clearAll();
+        Pins.leds.cathodes.clearAll();
+        Pins.leds.anodes.directionSetAll();
+        Pins.leds.cathodes.directionSetAll();
+    }
+
+    fn update() void {
+        if (!ready) {
+            Adc.registers.enable.write(0);
+            Adc.registers.config.write(.{ .resolution = 2, .refsel = 0, .inpsel = 2, .psel = @as(u8, 1) << @truncate(u3, ain) });
+            Adc.registers.enable.write(1);
+            // ready = true;
+            TimeKeeper.delay(5 * 1000);
+        }
+
+        Gpio.registers.out.set(column_mask);
+        Gpio.registers.direction.clear(column_mask);
+        Adc.tasks.start.do();
+        // TimeKeeper.delay(5 * 1000);
+        while (Adc.busy_registers.busy != 0) {}
+        format("ain{} {} ", .{ ain, Adc.registers.result });
+        Gpio.registers.out.clear(column_mask);
+        Gpio.registers.direction.set(column_mask);
+        log("", .{});
+    }
+};
+
+fn main() callconv(.C) noreturn {
     Bss.prepare();
     Exceptions.prepare();
     Uart.prepare();
 
-    Timer0.prepare();
-    Timer1.prepare();
-    Timer2.prepare();
-    LedMatrix.prepare();
+    Timer(0).prepare();
+    Timer(1).prepare();
+    Timer(2).prepare();
+    // LedMatrix.prepare();
     ClockManagement.prepareHf();
 
     CycleActivity.prepare();
     TerminalActivity.prepare();
 
-    I2c0.prepare();
+    I2c(0).prepare();
     Accel.prepare();
+    LightSensor.prepare();
 
     while (true) {
         CycleActivity.update();
+        LightSensor.update();
         TerminalActivity.update();
     }
 }
@@ -25,32 +123,42 @@ const Accel = struct {
     fn prepare() void {
         var data_buf: [0x32]u8 = undefined;
         data_buf[orientation_configuration_register] = orientation_configuration_register_mask_enable;
-        I2c0.writeBlockingPanic(device_address, &data_buf, orientation_configuration_register, orientation_configuration_register);
+        I2c(0).writeBlockingPanic(device_address, &data_buf, orientation_configuration_register, orientation_configuration_register);
         data_buf[control_register1] = control_register1_mask_active;
-        I2c0.writeBlockingPanic(device_address, &data_buf, control_register1, control_register1);
+        I2c(0).writeBlockingPanic(device_address, &data_buf, control_register1, control_register1);
     }
 
     fn update() void {
         var data_buf: [32]u8 = undefined;
-        I2c0.readBlockingPanic(device_address, &data_buf, orientation_register, orientation_register);
+        I2c(0).readBlockingPanic(device_address, &data_buf, orientation_register, orientation_register);
         const orientation = data_buf[orientation_register];
         if (orientation & orientation_register_mask_changed != 0) {
-            literal("orientation: 0x{x} ", .{orientation});
+            format("orientation: 0x{x} ", .{orientation});
             if (orientation & orientation_register_mask_forward_backward != 0) {
-                literal("forward ", .{});
+                format("forward ", .{});
             } else {
-                literal("backward ", .{});
+                format("backward ", .{});
             }
             if (orientation & orientation_register_mask_z_lock_out != 0) {
                 log("up/down/left/right is unknown", .{});
             } else {
                 const direction = (orientation & orientation_register_mask_direction) >> @ctz(u5, orientation_register_mask_direction);
                 switch (direction) {
-                    0 => { log("up", .{}); },
-                    1 => { log("down", .{}); },
-                    2 => { log("right", .{}); },
-                    3 => { log("left", .{}); },
-                    else => { unreachable; },
+                    0 => {
+                        log("up", .{});
+                    },
+                    1 => {
+                        log("down", .{});
+                    },
+                    2 => {
+                        log("right", .{});
+                    },
+                    3 => {
+                        log("left", .{});
+                    },
+                    else => {
+                        unreachable;
+                    },
                 }
             }
         }
@@ -87,14 +195,13 @@ const CycleActivity = struct {
 
     fn update() void {
         cycle_counter += 1;
-        const new_cycle_start = Timer0.capture();
+        const new_cycle_start = Timer(0).captureAndRead();
         if (last_cycle_start) |start| {
             cycle_time = new_cycle_start -% start;
             max_cycle_time = math.max(cycle_time, max_cycle_time);
         }
         last_cycle_start = new_cycle_start;
-        if (up_timer.isFinished()) {
-            up_timer.reset();
+        if (up_timer.isFinishedThenReset()) {
             up_time_seconds += 1;
             Accel.update();
         }
@@ -109,7 +216,7 @@ const TerminalActivity = struct {
     fn prepare() void {
         keyboard_column = 1;
         prev_now = CycleActivity.up_time_seconds;
-        Temperature.tasks.start = 1;
+        Temperature.tasks.start.do();
         redraw();
     }
 
@@ -122,6 +229,7 @@ const TerminalActivity = struct {
     }
 
     fn update() void {
+        // LedMatrix.update();
         if (Uart.isReadByteReady()) {
             const byte = Uart.readByte();
             switch (byte) {
@@ -146,9 +254,9 @@ const TerminalActivity = struct {
             }
         }
         Uart.update();
-        if (Temperature.events.data_ready != 0) {
-            Temperature.events.data_ready = 0;
-            temperature = Temperature.registers.temperature;
+        if (Temperature.events.data_ready.occurred()) {
+            Temperature.events.data_ready.clear();
+            temperature = Temperature.registers.temperature.read();
         }
         const now = CycleActivity.up_time_seconds;
         if (now >= prev_now + 1) {
@@ -162,9 +270,13 @@ const TerminalActivity = struct {
     }
 };
 
+const status_display_lines = 6 + 6;
+
+pub const mission_number: u32 = 3;
+
+pub const vector_table linksection(".vector_table") = simpleVectorTable(main);
 comptime {
-    const mission_id = 3;
-    asm (typicalVectorTable(mission_id));
+    @export(vector_table, .{ .name = "vector_table_mission3" });
 }
 
 usingnamespace @import("lib_basics.zig").typical;

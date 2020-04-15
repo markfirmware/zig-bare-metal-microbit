@@ -11,9 +11,7 @@ pub fn build(b: *std.build.Builder) !void {
     exe.setTarget(model.target);
     exe.link_function_sections = true;
 
-    const run_makehex = b.addSystemCommand(&[_][]const u8{
-        "zig", "run", "build.zig", "--", "makehex",
-    });
+    const run_makehex = proposal.addFunctionStep(b, makeHex, "makeHex");
     run_makehex.step.dependOn(&exe.step);
 
     const qemu = b.step("qemu", "run in qemu");
@@ -56,13 +54,25 @@ pub const model = struct {
     };
 };
 
-pub fn main() !void {
-    if (os.argv.len == 2 and mem.eql(u8, mem.spanZ(os.argv[1]), "makehex")) {
-        try makeHex();
-    } else {
-        return error.InvalidFunction;
+pub const main = proposal.dispatch;
+const proposal = struct {
+    fn addFunctionStep(b: *std.build.Builder, f: fn () anyerror!void, fName: []const u8) *std.build.RunStep {
+        return b.addSystemCommand(&[_][]const u8{
+            "zig", "run", "build.zig", "--", fName,
+        });
     }
-}
+    fn dispatch() !void {
+        const mem = std.mem;
+        const os = std.os;
+        if (os.argv.len == 2 and mem.eql(u8, mem.spanZ(os.argv[1]), "makeHex")) {
+            try makeHex();
+        } else {
+            return error.InvalidFunction;
+        }
+    }
+};
+
+const hex_record_len = 32;
 
 fn makeHex() !void {
     const cwd = fs.cwd();
@@ -71,8 +81,7 @@ fn makeHex() !void {
     const hex = try cwd.createFile("main.hex", fs.File.CreateFlags{});
     defer hex.close();
     var offset: usize = 0;
-    var read_buf: [4 * 1024 * 1024]u8 = undefined;
-    assert(read_buf.len % 32 == 0);
+    var read_buf: [model.flash.size]u8 = undefined;
     while (true) {
         var n = try image.read(&read_buf);
         if (n == 0) {
@@ -82,7 +91,7 @@ fn makeHex() !void {
             if (offset % 0x10000 == 0) {
                 try writeHexRecord(hex, 0, 0x04, &[_]u8{ @truncate(u8, offset >> 24), @truncate(u8, offset >> 16) });
             }
-            const i = math.min(32, n - offset);
+            const i = std.math.min(hex_record_len, n - offset);
             try writeHexRecord(hex, offset % 0x10000, 0x00, read_buf[offset .. offset + i]);
             offset += i;
         }
@@ -91,7 +100,7 @@ fn makeHex() !void {
 }
 
 fn writeHexRecord(file: fs.File, offset: usize, code: u8, bytes: []u8) !void {
-    var record_buf: [1 + 2 + 1 + 32 + 1]u8 = undefined;
+    var record_buf: [1 + 2 + 1 + hex_record_len + 1]u8 = undefined;
     var record: []u8 = record_buf[0 .. 1 + 2 + 1 + bytes.len + 1];
     record[0] = @truncate(u8, bytes.len);
     record[1] = @truncate(u8, offset >> 8);
@@ -106,13 +115,9 @@ fn writeHexRecord(file: fs.File, offset: usize, code: u8, bytes: []u8) !void {
     }
     record[record.len - 1] = checksum;
     var line_buf: [1 + record_buf.len * 2 + 1]u8 = undefined;
-    _ = try file.write(try fmt.bufPrint(&line_buf, ":{X}\n", .{record}));
+    _ = try file.write(try std.fmt.bufPrint(&line_buf, ":{X}\n", .{record}));
 }
 
 const assert = std.debug.assert;
-const fmt = std.fmt;
 const fs = std.fs;
-const math = std.math;
-const mem = std.mem;
-const os = std.os;
 const std = @import("std");

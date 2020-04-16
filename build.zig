@@ -1,4 +1,4 @@
-pub fn build(b: *std.build.Builder) !void {
+pub fn build(b: *Builder) !void {
     const exec_name = "main";
     const mode = b.standardReleaseOptions();
     const main_program = b.option([]const u8, "main", "main file") orelse "mission0_mission_selector.zig";
@@ -11,7 +11,7 @@ pub fn build(b: *std.build.Builder) !void {
     exe.setTarget(model.target);
     exe.link_function_sections = true;
 
-    const run_makehex = proposal.addFunctionStep(b, makeHex, "makeHex");
+    const run_makehex = addCustom(b, MakeHexStep{ .input_name = "zig-cache/bin/main.img", .output_name = "main.hex" });
     run_makehex.step.dependOn(&exe.step);
 
     const qemu = b.step("qemu", "run in qemu");
@@ -54,70 +54,65 @@ pub const model = struct {
     };
 };
 
-pub const main = proposal.dispatch;
-const proposal = struct {
-    fn addFunctionStep(b: *std.build.Builder, f: fn () anyerror!void, fName: []const u8) *std.build.RunStep {
-        return b.addSystemCommand(&[_][]const u8{
-            "zig", "run", "build.zig", "--", fName,
-        });
-    }
-    fn dispatch() !void {
-        const mem = std.mem;
-        const os = std.os;
-        if (os.argv.len == 2 and mem.eql(u8, mem.spanZ(os.argv[1]), "makeHex")) {
-            try makeHex();
-        } else {
-            return error.InvalidFunction;
+const MakeHexStep = struct {
+    step: std.build.Step = undefined,
+    input_name: []const u8,
+    output_name: []const u8,
+
+    pub fn make(step: *std.build.Step) anyerror!void {
+        const self = @fieldParentPtr(MakeHexStep, "step", step);
+        const cwd = fs.cwd();
+        const image = try cwd.openFile(self.input_name, fs.File.OpenFlags{});
+        defer image.close();
+        const hex = try cwd.createFile(self.output_name, fs.File.CreateFlags{});
+        defer hex.close();
+        var offset: usize = 0;
+        var read_buf: [model.flash.size]u8 = undefined;
+        while (true) {
+            var n = try image.read(&read_buf);
+            if (n == 0) {
+                break;
+            }
+            while (offset < n) {
+                if (offset % 0x10000 == 0) {
+                    try writeHexRecord(hex, 0, 0x04, &[_]u8{ @truncate(u8, offset >> 24), @truncate(u8, offset >> 16) });
+                }
+                const i = std.math.min(hex_record_len, n - offset);
+                try writeHexRecord(hex, offset % 0x10000, 0x00, read_buf[offset .. offset + i]);
+                offset += i;
+            }
         }
+        try writeHexRecord(hex, 0, 0x01, &[_]u8{});
     }
+    fn writeHexRecord(file: fs.File, offset: usize, code: u8, bytes: []u8) !void {
+        var record_buf: [1 + 2 + 1 + hex_record_len + 1]u8 = undefined;
+        var record: []u8 = record_buf[0 .. 1 + 2 + 1 + bytes.len + 1];
+        record[0] = @truncate(u8, bytes.len);
+        record[1] = @truncate(u8, offset >> 8);
+        record[2] = @truncate(u8, offset >> 0);
+        record[3] = code;
+        for (bytes) |b, i| {
+            record[4 + i] = b;
+        }
+        var checksum: u8 = 0;
+        for (record[0 .. record.len - 1]) |b| {
+            checksum = checksum -% b;
+        }
+        record[record.len - 1] = checksum;
+        var line_buf: [1 + record_buf.len * 2 + 1]u8 = undefined;
+        _ = try file.write(try std.fmt.bufPrint(&line_buf, ":{X}\n", .{record}));
+    }
+    const hex_record_len = 32;
 };
 
-const hex_record_len = 32;
-
-fn makeHex() !void {
-    const cwd = fs.cwd();
-    const image = try cwd.openFile("zig-cache/bin/main.img", fs.File.OpenFlags{});
-    defer image.close();
-    const hex = try cwd.createFile("main.hex", fs.File.CreateFlags{});
-    defer hex.close();
-    var offset: usize = 0;
-    var read_buf: [model.flash.size]u8 = undefined;
-    while (true) {
-        var n = try image.read(&read_buf);
-        if (n == 0) {
-            break;
-        }
-        while (offset < n) {
-            if (offset % 0x10000 == 0) {
-                try writeHexRecord(hex, 0, 0x04, &[_]u8{ @truncate(u8, offset >> 24), @truncate(u8, offset >> 16) });
-            }
-            const i = std.math.min(hex_record_len, n - offset);
-            try writeHexRecord(hex, offset % 0x10000, 0x00, read_buf[offset .. offset + i]);
-            offset += i;
-        }
-    }
-    try writeHexRecord(hex, 0, 0x01, &[_]u8{});
-}
-
-fn writeHexRecord(file: fs.File, offset: usize, code: u8, bytes: []u8) !void {
-    var record_buf: [1 + 2 + 1 + hex_record_len + 1]u8 = undefined;
-    var record: []u8 = record_buf[0 .. 1 + 2 + 1 + bytes.len + 1];
-    record[0] = @truncate(u8, bytes.len);
-    record[1] = @truncate(u8, offset >> 8);
-    record[2] = @truncate(u8, offset >> 0);
-    record[3] = code;
-    for (bytes) |b, i| {
-        record[4 + i] = b;
-    }
-    var checksum: u8 = 0;
-    for (record[0 .. record.len - 1]) |b| {
-        checksum = checksum -% b;
-    }
-    record[record.len - 1] = checksum;
-    var line_buf: [1 + record_buf.len * 2 + 1]u8 = undefined;
-    _ = try file.write(try std.fmt.bufPrint(&line_buf, ":{X}\n", .{record}));
-}
-
-const assert = std.debug.assert;
+const Builder = std.build.Builder;
 const fs = std.fs;
 const std = @import("std");
+const Step = std.build.Step;
+
+pub fn addCustom(self: *Builder, customStep: var) *@TypeOf(customStep) {
+    var allocated = self.allocator.create(@TypeOf(customStep)) catch unreachable;
+    allocated.* = customStep;
+    allocated.*.step = Step.init(@typeName(@TypeOf(customStep)), self.allocator, @TypeOf(customStep).make);
+    return allocated;
+}

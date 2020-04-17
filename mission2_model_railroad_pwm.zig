@@ -1,9 +1,8 @@
 fn main() callconv(.C) noreturn {
     Bss.prepare();
     Uart.prepare();
-    Timer(0).prepare();
-    Timer(1).prepare();
-    Timer(2).prepare();
+    Timers[0].prepare();
+    Timers[1].prepare();
     LedMatrix.prepare();
 
     CycleActivity.prepare();
@@ -43,7 +42,7 @@ const CycleActivity = struct {
     fn update() void {
         LedMatrix.update();
         cycle_counter += 1;
-        const new_cycle_start = Timer(0).captureAndRead();
+        const new_cycle_start = Timers[0].captureAndRead();
         if (up_timer.isFinishedThenReset()) {
             up_time_seconds += 1;
             cycles_per_second = cycle_counter -% last_cycle_counter;
@@ -80,16 +79,22 @@ const ThrottleActivity = struct {
     }
 
     fn releaseSimulatedButtons() void {
-        comptime var i: u32 = 0;
-        while (i < 2) : (i += 1) {
-            if (button(i).is_simulation_pressed) {
-                button(i).toggleSimulated();
-            }
+        //      comptime var i: u32 = 0;
+        //      while (i < 1) : (i += 1) {
+        //          if (button(i).is_simulation_pressed) {
+        //              button(i).toggleSimulated();
+        //          }
+        //      }
+        if (button(0).is_simulation_pressed) {
+            button(0).toggleSimulated();
+        }
+        if (button(1).is_simulation_pressed) {
+            button(1).toggleSimulated();
         }
     }
 
     fn update() void {
-        if (Pins.ring0.read() == 1) {
+        if (Pins.ring1.read() == 1) {
             pwm_loop_back_counter += 1;
         }
         button(0).update();
@@ -148,7 +153,7 @@ const ThrottleActivity = struct {
             fn update() void {
                 const new = (pin().read() == 0) or is_simulation_pressed;
                 if (new != is_pressed) {
-                    var now = Timer(0).captureAndRead();
+                    var now = Timers[0].captureAndRead();
                     const up_or_down = if (new) @as(usize, 1) else 0;
                     elapsed[up_or_down] = math.min(elapsed[up_or_down], now -% event_time);
                     event_time = now;
@@ -239,12 +244,11 @@ const ThrottleActivity = struct {
         fn prepare() void {
             percent = 0;
             Pins.ring1.connectIo();
-            Pins.ring0.connectInput();
-            Ppi.setChannelEventAndTask(0, Timer(1).events.compare[0], Gpiote.tasks.out[0]);
-            Ppi.setChannelEventAndTask(1, Timer(1).events.compare[1], Gpiote.tasks.out[0]);
-            Timer(1).registers.shorts.write(0x002);
-            // Timer(1).setShorts(compare1, clear);
-            Timer(1).registers.capture_compare[1].write(pwm_width_ticks_max);
+            Ppi.setChannelEventAndTask(0, Timers[1].events.compare[0], Gpiote.tasks.out[0]);
+            Ppi.setChannelEventAndTask(1, Timers[1].events.compare[1], Gpiote.tasks.out[0]);
+            // Timers[1].setShorts(compare1, clear);
+            Timers[1].registers.shorts.write(0x002);
+            Timers[1].registers.capture_compare[1].write(pwm_width_ticks_max);
         }
 
         fn setPercent(message: []const u8, new: i32) void {
@@ -255,7 +259,7 @@ const ThrottleActivity = struct {
                 log("{}: throttle remains at {}%", .{ message, percent });
             }
             percent = new_percent;
-            Timer(1).tasks.stop.do();
+            Timers[1].tasks.stop.do();
             const ppi_channels_0_and_1_mask = 1 << 0 | 1 << 1;
             Ppi.registers.channel_enable.clear(ppi_channels_0_and_1_mask);
             Gpiote.registers.config[0].write(.{ .mode = .Disabled });
@@ -265,12 +269,12 @@ const ThrottleActivity = struct {
                 Pins.ring1.set();
             } else if (percent > 0) {
                 pwm_width_ticks = 1000 * (100 - percent) * pwm_width_ticks_max / (100 * 1000);
-                Timer(1).registers.capture_compare[0].write(pwm_width_ticks);
+                Timers[1].registers.capture_compare[0].write(pwm_width_ticks);
                 Pins.ring1.clear();
                 Gpiote.registers.config[0].write(.{ .mode = .Task, .psel = Pins.ring1.id, .polarity = .Toggle, .outinit = .Low });
                 Ppi.registers.channel_enable.set(ppi_channels_0_and_1_mask);
-                Timer(1).tasks.clear.do();
-                Timer(1).tasks.start.do();
+                Timers[1].tasks.clear.do();
+                Timers[1].tasks.start.do();
             }
         }
     };

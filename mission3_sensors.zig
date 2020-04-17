@@ -13,11 +13,11 @@ const LightSensor = struct {
             low[i] = 0x7fffffff;
             high[i] = 0;
         }
-        cycle_start = Timer(0).captureAndRead();
+        cycle_start = Timers[0].captureAndRead();
     }
 
     fn update() void {
-        const new_cycle_start = Timer(0).captureAndRead();
+        const new_cycle_start = Timers[0].captureAndRead();
         if (new_cycle_start -% cycle_start >= 500 * 1000) {
             cycle_start = new_cycle_start;
             var sum: u32 = 0;
@@ -99,16 +99,14 @@ fn main() callconv(.C) noreturn {
     Exceptions.prepare();
     Uart.prepare();
 
-    Timer(0).prepare();
-    Timer(1).prepare();
-    Timer(2).prepare();
+    Timers[0].prepare();
     // LedMatrix.prepare();
     ClockManagement.prepareHf();
 
     CycleActivity.prepare();
     TerminalActivity.prepare();
 
-    I2c(0).prepare();
+    I2cs[0].prepare();
     Accel.prepare();
     LightSensor.prepare();
 
@@ -121,16 +119,17 @@ fn main() callconv(.C) noreturn {
 
 const Accel = struct {
     fn prepare() void {
+        I2cs[0].confirm(device_address);
         var data_buf: [0x32]u8 = undefined;
         data_buf[orientation_configuration_register] = orientation_configuration_register_mask_enable;
-        I2c(0).writeBlockingPanic(device_address, &data_buf, orientation_configuration_register, orientation_configuration_register);
+        I2cs[0].writeBlockingPanic(device_address, &data_buf, orientation_configuration_register, orientation_configuration_register);
         data_buf[control_register1] = control_register1_mask_active;
-        I2c(0).writeBlockingPanic(device_address, &data_buf, control_register1, control_register1);
+        I2cs[0].writeBlockingPanic(device_address, &data_buf, control_register1, control_register1);
     }
 
     fn update() void {
         var data_buf: [32]u8 = undefined;
-        I2c(0).readBlockingPanic(device_address, &data_buf, orientation_register, orientation_register);
+        I2cs[0].readBlockingPanic(device_address, &data_buf, orientation_register, orientation_register);
         const orientation = data_buf[orientation_register];
         if (orientation & orientation_register_mask_changed != 0) {
             format("orientation: 0x{x} ", .{orientation});
@@ -195,7 +194,7 @@ const CycleActivity = struct {
 
     fn update() void {
         cycle_counter += 1;
-        const new_cycle_start = Timer(0).captureAndRead();
+        const new_cycle_start = Timers[0].captureAndRead();
         if (last_cycle_start) |start| {
             cycle_time = new_cycle_start -% start;
             max_cycle_time = math.max(cycle_time, max_cycle_time);

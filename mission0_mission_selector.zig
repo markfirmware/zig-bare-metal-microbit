@@ -49,9 +49,7 @@ fn main() callconv(.C) noreturn {
     Exceptions.prepare();
     Mission.prepare();
     Uart.prepare();
-    Timer(0).prepare();
-    Timer(1).prepare();
-    Timer(2).prepare();
+    Timers[0].prepare();
     LedMatrix.prepare();
 
     CycleActivity.prepare();
@@ -93,7 +91,7 @@ const CycleActivity = struct {
     fn update() void {
         LedMatrix.update();
         cycle_counter += 1;
-        const new_cycle_start = Timer(0).captureAndRead();
+        const new_cycle_start = Timers[0].captureAndRead();
         if (new_cycle_start -% last_second_ticks >= 1000 * 1000) {
             up_time_seconds += 1;
             last_second_ticks = new_cycle_start;
@@ -125,14 +123,14 @@ const KeyboardActivity = struct {
     }
 
     fn waitEscape() []u8 {
-        const start = Timer(0).captureAndRead();
+        const start = Timers[0].captureAndRead();
         while (true) {
             Uart.loadTxd();
             if (getEscape()) |e| {
                 return e;
             }
             update();
-            if (Timer(0).captureAndRead() -% start >= 10 * 1000) {
+            if (Timers[0].captureAndRead() -% start >= 10 * 1000) {
                 return "";
             }
         }
@@ -146,12 +144,12 @@ const KeyboardActivity = struct {
 
     fn receiveEscape() void {
         escape = "";
-        var start = Timer(0).captureAndRead();
+        var start = Timers[0].captureAndRead();
         var last = start;
         max = 0;
         var now: u32 = undefined;
         while (!escape_ready) {
-            now = Timer(0).captureAndRead();
+            now = Timers[0].captureAndRead();
             if (Uart.isReadByteReady()) {
                 const byte = Uart.readByte();
                 max = math.max(max, now -% last);

@@ -6,7 +6,7 @@ pub const lib = struct {
     };
 
     const Gpiote = struct {
-        const p = peripheral(6);
+        const p = peripheral(0x40006000);
         pub const tasks = struct {
             pub const out = p.taskArray(4, 0x000);
         };
@@ -15,7 +15,7 @@ pub const lib = struct {
             pub const port = p.event(0x17c);
         };
         pub const registers = struct {
-            pub const interrupts = p.registerWriteSetClear(0x300, 0x304, 0x308);
+            pub const interrupts = p.registersWriteSetClear(0x300, 0x304, 0x308);
             pub const config = p.typedRegisterArray(4, 0x510, packed struct {
                 mode: enum(u2) {
                     Disabled,
@@ -42,7 +42,7 @@ pub const lib = struct {
     };
 
     const Adc = struct {
-        const p = peripheral(7);
+        const p = peripheral(0x40007000);
         pub const tasks = struct {
             pub const start = p.task(0x000);
             pub const stop = p.task(0x004);
@@ -68,7 +68,7 @@ pub const lib = struct {
     };
 
     const ClockManagement = struct {
-        const p = peripheral(0);
+        const p = peripheral(0x40000000);
         pub const tasks = struct {
             pub const start_hf_clock = p.task(0x000);
             pub const stop_hf_clock = p.task(0x004);
@@ -80,7 +80,7 @@ pub const lib = struct {
             pub const lf_clock_started = p.event(0x104);
         };
         pub const registers = struct {
-            pub const interrupts = p.registerWriteSetClear(0x300, 0x304, 0x308);
+            pub const interrupts = p.registersWriteSetClear(0x300, 0x304, 0x308);
             pub const frequency_selector = p.register(0x550);
         };
         pub fn prepareHf() void {
@@ -126,11 +126,11 @@ pub const lib = struct {
     };
 
     const Gpio = struct {
-        const p = peripheral(0x10000);
+        const p = peripheral(0x50000000);
         pub const registers = struct {
-            pub const out = p.registerWriteSetClear(0x504, 0x508, 0x50c);
+            pub const out = p.registersWriteSetClear(0x504, 0x508, 0x50c);
             pub const in = p.register(0x510);
-            pub const direction = p.registerWriteSetClear(0x514, 0x518, 0x51c);
+            pub const direction = p.registersWriteSetClear(0x514, 0x518, 0x51c);
             pub const config = p.typedRegisterArray(32, 0x700, packed struct {
                 output_connected: u1,
                 input_disconnected: u1,
@@ -261,10 +261,11 @@ pub const lib = struct {
         .{ .{ 3, 3 }, .{ 2, 7 }, .{ 3, 1 }, .{ 2, 6 }, .{ 3, 2 } },
     };
 
-    fn I2c(comptime instance_id: u32) type {
-        assert(instance_id < 2);
+    pub const I2cs = [_]@TypeOf(I2c(0x40003000)){ I2c(0x40003000), I2c(0x40004000) };
+
+    fn I2c(comptime base: u32) type {
         return struct {
-            const p = peripheral(3 + instance_id);
+            const p = peripheral(base);
             pub const tasks = struct {
                 pub const startrx = p.task(0x000);
                 pub const starttx = p.task(0x008);
@@ -281,7 +282,7 @@ pub const lib = struct {
             };
             pub const registers = struct {
                 pub const shorts = p.shorts(0x200);
-                pub const interrupts = p.registerWriteSetClear(0x300, 0x304, 0x308);
+                pub const interrupts = p.registersWriteSetClear(0x300, 0x304, 0x308);
                 pub const errorsrc = p.typedRegister(0x4c4, packed struct {
                     overrun: u1,
                     address_nack: u1,
@@ -301,19 +302,24 @@ pub const lib = struct {
                 pub const device_address = p.register(0x588);
             };
             pub fn prepare() void {
+                Pins.i2c.scl.connectOutput();
+                Pins.i2c.sda.connectIo();
                 registers.enable.write(0);
-                Pins.i2c.scl.direction.set();
-                Pins.i2c.sda.direction.set();
                 registers.pselscl.write(Pins.i2c.scl.id);
                 registers.pselscl.write(Pins.i2c.sda.id);
                 registers.frequency.write(.K400);
                 registers.enable.write(5);
             }
+            pub fn confirm(device_address: u32) void {
+                probe(device_address) catch |err| {
+                    panicf("{}", .{err});
+                };
+            }
             pub fn probe(device_address: u32) !void {
                 registers.device_address.write(device_address);
                 tasks.startrx.do();
                 defer tasks.stop.do();
-                try wait(events.byte_break);
+                try waitForEvent(events.byte_break);
             }
             pub fn readBlocking(device_address: u32, data: []u8, first: u32, last: u32) !void {
                 registers.device_address.write(device_address);
@@ -332,11 +338,11 @@ pub const lib = struct {
             }
             pub fn readBlockingPanic(device_address: u32, data: []u8, first: u32, last: u32) void {
                 if (readBlocking(device_address, data, first, last)) |_| {} else |err| {
-                    panicf("i2c device 0x{x} read {} errorsrc 0x{x}", .{ device_address, err, registers.errorsrc });
+                    panicf("i2c device 0x{x} read reg 0{x} {} {}", .{ device_address, first, err, registers.errorsrc.read() });
                 }
             }
             pub fn waitForEvent(comptime the_event: Event) !void {
-                const start = Timer(0).captureAndRead();
+                const start = Timers[0].captureAndRead();
                 while (true) {
                     if (the_event.occurred()) {
                         the_event.clear();
@@ -345,7 +351,7 @@ pub const lib = struct {
                     if (@bitCast(u32, registers.errorsrc.read()) != 0) {
                         return error.I2cSeeErrorSourceRegister;
                     }
-                    if (Timer(0).captureAndRead() -% start > 500 * 1000) {
+                    if (Timers[0].captureAndRead() -% start > 10 * 1000) {
                         return error.I2cTimeExpired;
                     }
                 }
@@ -364,7 +370,7 @@ pub const lib = struct {
             }
             pub fn writeBlockingPanic(device_address: u32, data: []u8, first: u32, last: u32) void {
                 if (writeByteBlocking(device_address, data, first, last)) |_| {} else |err| {
-                    panicf("i2c device 0x{x} write {} errorsrc 0x{x}", .{ device_address, err, registers.errorsrc });
+                    panicf("i2c device 0x{x} write reg 0x{x} {} {}", .{ device_address, first, err, registers.errorsrc.read() });
                 }
             }
         };
@@ -441,21 +447,15 @@ pub const lib = struct {
     };
 
     const Ppi = struct {
-        const p = peripheral(31);
+        const p = peripheral(0x4001f000);
         pub const tasks = struct {
-            pub const group0_enable = p.task(0x000);
-            pub const group0_disable = p.task(0x004);
-            pub const group1_enable = p.task(0x008);
-            pub const group1_disable = p.task(0x00c);
-            pub const group2_enable = p.task(0x010);
-            pub const group2_disable = p.task(0x014);
-            pub const group3_enable = p.task(0x018);
-            pub const group3_disable = p.task(0x01c);
+            pub const group_enable = p.taskArrayDelta(4, 0x000, 8);
+            pub const group_disable = p.taskArrayDelta(4, 0x004, 8);
         };
         pub const registers = struct {
             pub const event_end_points = p.registerArrayDelta(16, 0x510, 8);
             pub const task_end_points = p.registerArrayDelta(16, 0x514, 8);
-            pub const channel_enable = p.registerWriteSetClear(0x500, 0x504, 0x508);
+            pub const channel_enable = p.registersWriteSetClear(0x500, 0x504, 0x508);
         };
         pub fn setChannelEventAndTask(comptime channel: u32, event: Event, task: Task) void {
             registers.event_end_points[channel].write(@ptrToInt(event.address));
@@ -464,12 +464,12 @@ pub const lib = struct {
     };
 
     const Power = struct {
-        const p = peripheral(0);
+        const p = peripheral(0x40000000);
         pub const events = struct {
             pub const power_failure_warning = p.event(0x108);
         };
         pub const registers = struct {
-            pub const interrupts = p.registerWriteSetClear(0x300, 0x304, 0x308);
+            pub const interrupts = p.registersWriteSetClear(0x300, 0x304, 0x308);
             pub const reset_reason = p.register(0x400);
         };
         pub var captured_reset_reason: u32 = undefined;
@@ -480,7 +480,7 @@ pub const lib = struct {
     };
 
     const Radio = struct {
-        const p = peripheral(1);
+        const p = peripheral(0x40001000);
         pub const tasks = struct {
             pub const tx_enable = p.task(0x000);
             pub const rx_enable = p.task(0x004);
@@ -521,7 +521,7 @@ pub const lib = struct {
     };
 
     const Rng = struct {
-        const p = peripheral(13);
+        const p = peripheral(0x4000d000);
         pub const tasks = struct {
             pub const start = p.task(0x000);
             pub const stop = p.task(0x004);
@@ -531,8 +531,8 @@ pub const lib = struct {
         };
         pub const registers = struct {
             pub const shorts = p.shorts(0x200);
-            pub const interrupts = p.registerWriteSetClear(0x300, 0x304, 0x308);
-            pub const config = p.mmio(0x504, packed struct {
+            pub const interrupts = p.registersWriteSetClear(0x300, 0x304, 0x308);
+            pub const config = p.typedRegister(0x504, packed struct {
                 enable: u1 = 0,
                 unused1: u31 = 0,
             });
@@ -541,7 +541,7 @@ pub const lib = struct {
     };
 
     pub const SystemControlBlock = struct {
-        const p = peripheral(0xa000e);
+        const p = peripheral(0xe000e000);
         pub const registers = struct {
             pub const cpuid = p.register(0xd00);
             pub const icsr = p.register(0xd04);
@@ -557,7 +557,7 @@ pub const lib = struct {
     };
 
     const Temperature = struct {
-        const p = peripheral(12);
+        const p = peripheral(0x4000c000);
         pub const tasks = struct {
             pub const start = p.task(0x000);
             pub const stop = p.task(0x004);
@@ -566,13 +566,13 @@ pub const lib = struct {
             pub const data_ready = p.event(0x100);
         };
         pub const registers = struct {
-            pub const interrupts = p.registerWriteSetClear(0x300, 0x304, 0x308);
+            pub const interrupts = p.registersWriteSetClear(0x300, 0x304, 0x308);
             pub const temperature = p.register(0x508);
         };
     };
 
     const Wdt = struct {
-        const p = peripheral(16);
+        const p = peripheral(0x40010000);
         pub const tasks = struct {
             pub const start = p.task(0x000);
         };
@@ -590,9 +590,10 @@ pub const lib = struct {
         };
     };
 
-    fn peripheral(comptime peripheral_id: u32) type {
+    fn peripheral(comptime base: u32) type {
+        assert(base == 0xe000e000 or base == 0x50000000 or base & 0xfffe0fff == 0x40000000);
         return struct {
-            const base = 0x40000000 + peripheral_id * 0x1000;
+            const peripheral_id = base >> 12 & 0x1f;
             fn event(comptime offset: u32) Event {
                 var e: Event = undefined;
                 e.address = @intToPtr(*align(4) volatile u32, base + offset);
@@ -612,7 +613,7 @@ pub const lib = struct {
             fn register(comptime offset: u32) type {
                 return typedRegister(offset, u32);
             }
-            fn registerWriteSetClear(comptime write_offset: u32, comptime set_offset: u32, comptime clear_offset: u32) type {
+            fn registersWriteSetClear(comptime write_offset: u32, comptime set_offset: u32, comptime clear_offset: u32) type {
                 return struct {
                     pub fn read() u32 {
                         return register(write_offset).read();
@@ -671,6 +672,9 @@ pub const lib = struct {
             }
             fn taskArray(comptime length: u32, comptime offset: u32) [length]Task {
                 return addressedArray(length, offset, 4, Task);
+            }
+            fn taskArrayDelta(comptime length: u32, comptime offset: u32, delta: u32) [length]Task {
+                return addressedArray(length, offset, delta, Task);
             }
         };
     }
@@ -771,8 +775,8 @@ pub const lib = struct {
         start_time: u32,
 
         fn capture(self: *TimeKeeper) u32 {
-            Timer(0).tasks.capture[0].do();
-            return Timer(0).registers.capture_compare[0].read();
+            Timers[0].tasks.capture[0].do();
+            return Timers[0].registers.capture_compare[0].read();
         }
 
         fn elapsed(self: *TimeKeeper) u32 {
@@ -813,13 +817,14 @@ pub const lib = struct {
         }
     };
 
+    pub const Timers = [_]@TypeOf(Timer(0x40008000)){ Timer(0x40008000), Timer(0x40009000), Timer(0x4000a000) };
+
     // bit mode
     // prescaler
-    fn Timer(instance_id: u32) type {
-        assert(instance_id < 3);
+    fn Timer(base: u32) type {
         return struct {
-            const max_width = if (instance_id == 0) @as(u32, 32) else 16;
-            const p = peripheral(8 + instance_id);
+            const max_width = if (base == 0x40008000) @as(u32, 32) else 16;
+            const p = peripheral(base);
             pub const tasks = struct {
                 pub const start = p.task(0x000);
                 pub const stop = p.task(0x004);
@@ -844,14 +849,14 @@ pub const lib = struct {
             }
             pub fn prepare() void {
                 registers.mode.write(0x0);
-                registers.bit_mode.write(if (instance_id == 0) @as(u32, 0x3) else 0x0);
-                registers.prescaler.write(if (instance_id == 0) @as(u32, 4) else 9);
+                registers.bit_mode.write(if (base == 0x40008000) @as(u32, 0x3) else 0x0);
+                registers.prescaler.write(if (base == 0x40008000) @as(u32, 4) else 9);
                 tasks.start.do();
                 const now = captureAndRead();
                 var i: u32 = 0;
                 while (captureAndRead() == now) : (i += 1) {
                     if (i == 1000) {
-                        panicf("timer {} is not responding", .{instance_id});
+                        panicf("timer 0x{x} is not responding", .{base});
                     }
                 }
             }
@@ -859,7 +864,7 @@ pub const lib = struct {
     }
 
     const Uart = struct {
-        const p = peripheral(2);
+        const p = peripheral(0x40002000);
         pub const tasks = struct {
             pub const start_rx = p.task(0x000);
             pub const stop_rx = p.task(0x004);
@@ -875,7 +880,7 @@ pub const lib = struct {
             pub const rx_timeout = p.event(0x144);
         };
         pub const registers = struct {
-            pub const interrupts = p.registerWriteSetClear(0x300, 0x304, 0x308);
+            pub const interrupts = p.registersWriteSetClear(0x300, 0x304, 0x308);
             pub const error_source = p.register(0x480);
             pub const enable = p.register(0x500);
             pub const pin_select_rts = p.register(0x508);
@@ -1079,7 +1084,7 @@ pub const typical = struct {
     pub const Gpio = lib.Gpio;
     pub const Gpio2 = lib.Gpio2;
     pub const Gpiote = lib.Gpiote;
-    pub const I2c = lib.I2c;
+    pub const I2cs = lib.I2cs;
     pub const lib_basics = lib;
     pub const log = Uart.log;
     pub const math = std.math;
@@ -1096,7 +1101,7 @@ pub const typical = struct {
     pub const Temperature = lib.Temperature;
     pub const Terminal = lib.Terminal;
     pub const TimeKeeper = lib.TimeKeeper;
-    pub const Timer = lib.Timer;
+    pub const Timers = lib.Timers;
     pub const linkVectorTable = lib.linkVectorTable;
     pub const Uart = lib.Uart;
     pub const Uicr = lib.Uicr;

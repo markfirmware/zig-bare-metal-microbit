@@ -183,6 +183,9 @@ pub const lib = struct {
                 pub fn clear() void {
                     Gpio.registers.out.clear(mask);
                 }
+                pub fn connectI2c() void {
+                    Gpio.registers.config[id].write(.{ .output_connected = 0, .input_disconnected = 0, .pull = .disabled, .drive = .s0d1, .sense = .disabled });
+                }
                 pub fn connectInput() void {
                     Gpio.registers.config[id].write(.{ .output_connected = 0, .input_disconnected = 0, .pull = .disabled, .drive = .s0s1, .sense = .disabled });
                 }
@@ -278,7 +281,7 @@ pub const lib = struct {
                 pub const rxready = p.event(0x108);
                 pub const txdsent = p.event(0x11c);
                 pub const error_event = p.event(0x124);
-                pub const byte_break = p.event(0x138);
+                pub const byte_boundary = p.event(0x138);
             };
             pub const registers = struct {
                 pub const shorts = p.shorts(0x200);
@@ -302,24 +305,52 @@ pub const lib = struct {
                 pub const device_address = p.register(0x588);
             };
             pub fn prepare() void {
-                Pins.i2c.scl.connectOutput();
-                Pins.i2c.sda.connectIo();
+                Pins.i2c.scl.connectI2c();
+                Pins.i2c.sda.connectI2c();
                 registers.enable.write(0);
                 registers.pselscl.write(Pins.i2c.scl.id);
-                registers.pselscl.write(Pins.i2c.sda.id);
+                registers.pselsda.write(Pins.i2c.sda.id);
                 registers.frequency.write(.K400);
                 registers.enable.write(5);
             }
-            pub fn confirm(device_address: u32) void {
-                probe(device_address) catch |err| {
-                    panicf("{}", .{err});
-                };
-            }
-            pub fn probe(device_address: u32) !void {
+            pub fn probe(device_address: u32) bool {
                 registers.device_address.write(device_address);
-                tasks.startrx.do();
-                defer tasks.stop.do();
-                try waitForEvent(events.byte_break);
+                tasks.starttx.do();
+                const start = Timers[0].captureAndRead();
+                while (true) {
+                    var e = registers.errorsrc.read();
+                    if (e.overrun == 1 or e.data_nack == 1) {
+                        panicf("i2c probe unexpected errorsrc 0x{x}", .{e});
+                    } else if (e.address_nack == 1) {
+                        registers.errorsrc.write(e);
+                        e = registers.errorsrc.read();
+                        if (@bitCast(u32, e) != 0) {
+                            panicf("could not clear address_nack 0x{x}", .{e});
+                        }
+                        return false;
+                    } else if (Timers[0].captureAndRead() -% start > 10 * 1000) {
+                        return true;
+                    }
+                }
+            }
+            pub fn device(comptime device_address: u32) type {
+                return struct {
+                    pub fn confirm() void {
+                        if (!probe(device_address)) {
+                            panicf("i2c device 0x{x} is not responding", .{device_address});
+                        }
+                    }
+                    pub fn read(first: u32) u8 {
+                        var data_buf: [64]u8 = undefined;
+                        readBlockingPanic(device_address, &data_buf, first, first);
+                        return data_buf[first];
+                    }
+                    pub fn write(first: u32, byte: u8) void {
+                        var data_buf: [64]u8 = undefined;
+                        data_buf[first] = byte;
+                        writeBlockingPanic(device_address, &data_buf, first, first);
+                    }
+                };
             }
             pub fn readBlocking(device_address: u32, data: []u8, first: u32, last: u32) !void {
                 registers.device_address.write(device_address);

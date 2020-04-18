@@ -98,10 +98,10 @@ fn main() callconv(.C) noreturn {
     Bss.prepare();
     Exceptions.prepare();
     Uart.prepare();
+    ClockManagement.prepareHf();
 
     Timers[0].prepare();
     // LedMatrix.prepare();
-    ClockManagement.prepareHf();
 
     CycleActivity.prepare();
     TerminalActivity.prepare();
@@ -118,19 +118,27 @@ fn main() callconv(.C) noreturn {
 }
 
 const Accel = struct {
+    const device = I2cs[0].device(0x1d);
     fn prepare() void {
-        I2cs[0].confirm(device_address);
-        var data_buf: [0x32]u8 = undefined;
-        data_buf[orientation_configuration_register] = orientation_configuration_register_mask_enable;
-        I2cs[0].writeBlockingPanic(device_address, &data_buf, orientation_configuration_register, orientation_configuration_register);
-        data_buf[control_register1] = control_register1_mask_active;
-        I2cs[0].writeBlockingPanic(device_address, &data_buf, control_register1, control_register1);
+        device.confirm();
+        orientation_configuration: {
+            const register = 0x11;
+            const mask_enable = 0x40;
+            device.write(register, mask_enable);
+        }
+        control_register1: {
+            const register = 0x2a;
+            const mask_active = 0x01;
+            device.write(register, mask_active);
+        }
     }
-
     fn update() void {
-        var data_buf: [32]u8 = undefined;
-        I2cs[0].readBlockingPanic(device_address, &data_buf, orientation_register, orientation_register);
-        const orientation = data_buf[orientation_register];
+        const orientation_register = 0x10;
+        const orientation_register_mask_changed = 0x80;
+        const orientation_register_mask_direction = 0x06;
+        const orientation_register_mask_forward_backward = 0x01;
+        const orientation_register_mask_z_lock_out = 0x40;
+        const orientation = device.read(orientation_register);
         if (orientation & orientation_register_mask_changed != 0) {
             format("orientation: 0x{x} ", .{orientation});
             if (orientation & orientation_register_mask_forward_backward != 0) {
@@ -162,17 +170,6 @@ const Accel = struct {
             }
         }
     }
-
-    const control_register1 = 0x2a;
-    const control_register1_mask_active = 0x01;
-    const device_address = 0x1d;
-    const orientation_register = 0x10;
-    const orientation_register_mask_changed = 0x80;
-    const orientation_register_mask_direction = 0x06;
-    const orientation_register_mask_forward_backward = 0x01;
-    const orientation_register_mask_z_lock_out = 0x40;
-    const orientation_configuration_register = 0x11;
-    const orientation_configuration_register_mask_enable = 0x40;
 };
 
 const CycleActivity = struct {

@@ -22,16 +22,16 @@ const LightSensor = struct {
             var col: u32 = 1;
             while (col <= 3) : (col += 1) {
                 const ain = col + 4;
-                const column_mask = @as(u32, 0x10) << @truncate(u5, col - 1);
+                const column_pin = Pins{ .led_cathodes = @as(u9, 1) << @truncate(u4, col - 1) };
 
                 Adc.registers.enable.write(0);
                 // Adc.registers.config = 2 | (0 << @ctz(u32, Adc.registers_config_masks.refsel)) | (2 << @ctz(u32, Adc.registers_config_masks.inpsel)) | ((@as(u32, 1) << @truncate(u5, ain)) << @ctz(u32, Adc.registers_config_masks.psel));
                 Adc.registers.config.write(.{ .resolution = 2, .refsel = 0, .inpsel = 2, .psel = @as(u8, 1) << @truncate(u3, ain) });
                 Adc.registers.enable.write(1);
 
-                Gpio.registers.out.set(column_mask);
+                column_pin.set();
                 TimeKeeper.delay(10 * 1000);
-                Gpio.registers.direction.clear(column_mask);
+                column_pin.directionClear();
                 Adc.tasks.start.do();
                 TimeKeeper.delay(5 * 1000);
                 assert(Adc.registers.busy.read() == 0);
@@ -50,8 +50,8 @@ const LightSensor = struct {
                 }
                 format("ain{} {:3}% {}/{}/{} ", .{ ain, percent, low[col - 1], result, high[col - 1] });
                 sum += percent;
-                Gpio.registers.out.clear(column_mask);
-                Gpio.registers.direction.set(column_mask);
+                column_pin.clear();
+                column_pin.directionSet();
             }
             log(" {:3}%", .{sum / 3});
         }
@@ -61,7 +61,7 @@ const LightSensor = struct {
 const LightSensorJustOne = struct {
     const col: u32 = 1;
     const ain = col + 4;
-    const column_mask = @as(u32, 0x10) << @truncate(u5, col - 1);
+    const column_pin = Pins{ .led_cathodes = @as(u9, 1) << @truncate(u4, col - 1) };
     var cycle_start: u32 = undefined;
 
     fn prepare() void {
@@ -71,7 +71,7 @@ const LightSensorJustOne = struct {
         Pins.of.led_anodes.clear();
         Pins.of.led_cathodes.set();
         Pins.of.leds.directionSet();
-        Gpio.registers.out.set(column_mask);
+        column_pin.set();
         cycle_start = Timers[0].captureAndRead();
     }
 

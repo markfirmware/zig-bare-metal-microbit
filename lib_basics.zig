@@ -128,9 +128,9 @@ pub const lib = struct {
     const Gpio = struct {
         const p = peripheral(0x50000000);
         pub const registers = struct {
-            pub const out = p.registersWriteSetClear(0x504, 0x508, 0x50c);
-            pub const in = p.register(0x510);
-            pub const direction = p.registersWriteSetClear(0x514, 0x518, 0x51c);
+            pub const out = p.typedRegistersWriteSetClear(0x504, 0x508, 0x50c, Pins);
+            pub const in = p.typedRegister(0x510, Pins);
+            pub const direction = p.typedRegistersWriteSetClear(0x514, 0x518, 0x51c, Pins);
             pub const config = p.typedRegisterArray(32, 0x700, packed struct {
                 output_connected: u1,
                 input_disconnected: u1,
@@ -175,7 +175,7 @@ pub const lib = struct {
             pub const i2c_sda = Pins{ .i2c_sda = 1 };
         };
         pub fn clear(self: Pins) void {
-            Gpio.registers.out.clear(self.mask());
+            Gpio.registers.out.clear(self);
         }
         pub fn connectI2c(self: Pins) void {
             var i: u32 = 0;
@@ -205,9 +205,10 @@ pub const lib = struct {
             Gpio.registers.direction.clear(self.mask());
         }
         pub fn directionSet(self: @This()) void {
-            Gpio.registers.direction.set(self.mask());
+            Gpio.registers.direction.set(self);
         }
         pub fn mask(self: Pins) u32 {
+            assert(@sizeOf(Pins) == 4);
             return @bitCast(u32, self);
         }
         pub fn maskUnion(self: Pins, other: Pins) Pins {
@@ -217,10 +218,10 @@ pub const lib = struct {
             return @truncate(u5, @ctz(u32, self.mask()) + i);
         }
         pub fn read(self: Pins) u32 {
-            return (Gpio.registers.in.read() & self.mask()) >> self.position(0);
+            return (@bitCast(u32, Gpio.registers.in.read()) & self.mask()) >> self.position(0);
         }
         pub fn set(self: Pins) void {
-            Gpio.registers.out.set(self.mask());
+            Gpio.registers.out.set(self);
         }
         fn width(self: Pins) u32 {
             return 32 - @clz(u32, self.mask()) - @ctz(u32, self.mask());
@@ -427,8 +428,10 @@ pub const lib = struct {
         pub fn update() void {
             if (scan_timer.isFinishedThenReset()) {
                 Pins.of.leds.clear();
-                Gpio.registers.out.set((@as(u32, 1) << @truncate(u5, 13 + scan_lines_index)) | (@as(u32, ~scan_lines[scan_lines_index]) << 4));
-                // Pins.leds.anodes.maskBit(scan_lines_index).maskPlus(Pins.leds.cathodes.maskClear(scan_lines[scan_lines_index])).set();
+                (Pins{
+                    .led_anodes = @as(u3, 1) << @truncate(u2, scan_lines_index),
+                    .led_cathodes = ~scan_lines[scan_lines_index],
+                }).set();
                 scan_lines_index = (scan_lines_index + 1) % scan_lines.len;
             }
         }
@@ -621,18 +624,21 @@ pub const lib = struct {
                 return typedRegister(offset, u32);
             }
             fn registersWriteSetClear(comptime write_offset: u32, comptime set_offset: u32, comptime clear_offset: u32) type {
+                return typedRegistersWriteSetClear(write_offset, set_offset, clear_offset, u32);
+            }
+            fn typedRegistersWriteSetClear(comptime write_offset: u32, comptime set_offset: u32, comptime clear_offset: u32, comptime T: type) type {
                 return struct {
-                    pub fn read() u32 {
-                        return register(write_offset).read();
+                    pub fn read() T {
+                        return typedRegister(write_offset, T).read();
                     }
-                    pub fn write(x: u32) void {
-                        register(write_offset).write(x);
+                    pub fn write(x: T) void {
+                        typedRegister(write_offset, T).write(x);
                     }
-                    pub fn set(x: u32) void {
-                        register(set_offset).write(x);
+                    pub fn set(x: T) void {
+                        typedRegister(set_offset, T).write(x);
                     }
-                    pub fn clear(x: u32) void {
-                        register(clear_offset).write(x);
+                    pub fn clear(x: T) void {
+                        typedRegister(clear_offset, T).write(x);
                     }
                 };
             }

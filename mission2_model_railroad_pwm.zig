@@ -94,7 +94,7 @@ const ThrottleActivity = struct {
     }
 
     fn update() void {
-        if (Pins.ring1.read() == 1) {
+        if (Pins.of.ring1.read() == 1) {
             pwm_loop_back_counter += 1;
         }
         button(0).update();
@@ -142,7 +142,7 @@ const ThrottleActivity = struct {
             }
 
             fn pin() Pins {
-                return if (index == 0) Pins.buttons.a else Pins.buttons.b;
+                return if (index == 0) Pins.of.button_a else Pins.of.button_b;
             }
 
             fn toggleSimulated() void {
@@ -243,7 +243,7 @@ const ThrottleActivity = struct {
 
         fn prepare() void {
             percent = 0;
-            Pins.ring1.connectIo();
+            Pins.of.ring1.connectIo();
             Ppi.setChannelEventAndTask(0, Timers[1].events.compare[0], Gpiote.tasks.out[0]);
             Ppi.setChannelEventAndTask(1, Timers[1].events.compare[1], Gpiote.tasks.out[0]);
             // Timers[1].setShorts(compare1, clear);
@@ -263,15 +263,15 @@ const ThrottleActivity = struct {
             const ppi_channels_0_and_1_mask = 1 << 0 | 1 << 1;
             Ppi.registers.channel_enable.clear(ppi_channels_0_and_1_mask);
             Gpiote.registers.config[0].write(.{ .mode = .Disabled });
-            Pins.ring1.clear();
+            Pins.of.ring1.clear();
             pwm_width_ticks = 0;
             if (percent == 100) {
-                Pins.ring1.set();
+                Pins.of.ring1.set();
             } else if (percent > 0) {
                 pwm_width_ticks = 1000 * (100 - percent) * pwm_width_ticks_max / (100 * 1000);
                 Timers[1].registers.capture_compare[0].write(pwm_width_ticks);
-                Pins.ring1.clear();
-                Gpiote.registers.config[0].write(.{ .mode = .Task, .psel = Pins.ring1.position(0), .polarity = .Toggle, .outinit = .Low });
+                Pins.of.ring1.clear();
+                Gpiote.registers.config[0].write(.{ .mode = .Task, .psel = Pins.of.ring1.position(0), .polarity = .Toggle, .outinit = .Low });
                 Ppi.registers.channel_enable.set(ppi_channels_0_and_1_mask);
                 Timers[1].tasks.clear.do();
                 Timers[1].tasks.start.do();

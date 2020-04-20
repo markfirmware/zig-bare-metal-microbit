@@ -144,36 +144,43 @@ pub const lib = struct {
         };
     };
 
-    pub const Pins = struct {
-        mask: u32,
-        pub const ring0 = pin(3);
-        pub const ring1 = pin(2);
-        pub const ring2 = pin(1);
-        pub const leds = struct {
-            pub const cathodes = pinField(4, 9);
-            pub const anodes = pinField(13, 3);
-            pub const all = anodes.maskPlus(cathodes);
-        };
-        pub const i2c = struct {
-            pub const scl = pin(0);
-            pub const sda = pin(30);
-            pub const all = scl.mask | sda.mask;
-        };
-        pub const buttons = struct {
-            pub const a = pin(17);
-            pub const b = pin(26);
-        };
-        pub const target = struct {
-            pub const txd = pin(24);
-            pub const rxd = pin(25);
+    pub const Pins = packed struct {
+        i2c_scl: u1 = 0,
+        ring2: u1 = 0,
+        ring1: u1 = 0,
+        ring0: u1 = 0,
+        led_cathodes: u9 = 0,
+        led_anodes: u3 = 0,
+        unused1: u1 = 0,
+        button_a: u1 = 0,
+        unused2: u6 = 0,
+        target_txd: u1 = 0,
+        target_rxd: u1 = 0,
+        button_b: u1 = 0,
+        unused3: u3 = 0,
+        i2c_sda: u1 = 0,
+        unused4: u1 = 0,
+        pub const of = struct {
+            pub const i2c_scl = Pins{ .i2c_scl = 1 };
+            pub const ring2 = Pins{ .ring2 = 1 };
+            pub const ring1 = Pins{ .ring1 = 1 };
+            pub const ring0 = Pins{ .ring0 = 1 };
+            pub const led_anodes = Pins{ .led_anodes = 0x7 };
+            pub const led_cathodes = Pins{ .led_cathodes = 0x1ff };
+            pub const leds = led_anodes.maskUnion(led_cathodes);
+            pub const button_a = Pins{ .button_a = 1 };
+            pub const target_txd = Pins{ .target_txd = 1 };
+            pub const target_rxd = Pins{ .target_rxd = 1 };
+            pub const button_b = Pins{ .button_b = 1 };
+            pub const i2c_sda = Pins{ .i2c_sda = 1 };
         };
         pub fn clear(self: Pins) void {
-            Gpio.registers.out.clear(self.mask);
+            Gpio.registers.out.clear(self.mask());
         }
         pub fn connectI2c(self: Pins) void {
             var i: u32 = 0;
             while (i < self.width()) : (i += 1) {
-                Gpio.registers.config[self.position(i)].write(.{ .output_connected = 0, .input_disconnected = 0, .pull = .disabled, .drive = .s0d1, .sense = .disabled });
+                Gpio.registers.config[i].write(.{ .output_connected = 0, .input_disconnected = 0, .pull = .disabled, .drive = .s0d1, .sense = .disabled });
             }
         }
         pub fn connectInput(self: Pins) void {
@@ -195,35 +202,31 @@ pub const lib = struct {
             }
         }
         pub fn directionClear(self: @This()) void {
-            Gpio.registers.direction.clear(self.mask);
+            Gpio.registers.direction.clear(self.mask());
         }
         pub fn directionSet(self: @This()) void {
-            Gpio.registers.direction.set(self.mask);
+            Gpio.registers.direction.set(self.mask());
         }
-        pub fn maskPlus(self: Pins, other: Pins) Pins {
-            return Pins{ .mask = self.mask | other.mask };
+        pub fn mask(self: Pins) u32 {
+            return @bitCast(u32, self);
         }
-        pub fn pin(comptime the_position: u32) Pins {
-            return pinField(the_position, 1);
-        }
-        pub fn pinField(the_position: u5, the_width: u5) Pins {
-            const mask = (@as(u32, 1) << the_width) - 1 << the_position;
-            return Pins{ .mask = mask };
+        pub fn maskUnion(self: Pins, other: Pins) Pins {
+            return @bitCast(Pins, self.mask() | other.mask());
         }
         fn position(self: Pins, i: u32) u5 {
-            return @truncate(u5, @ctz(u32, self.mask) + i);
+            return @truncate(u5, @ctz(u32, self.mask()) + i);
         }
         pub fn read(self: Pins) u32 {
-            return (Gpio.registers.in.read() & self.mask) >> self.position(0);
+            return (Gpio.registers.in.read() & self.mask()) >> self.position(0);
         }
         pub fn set(self: Pins) void {
-            Gpio.registers.out.set(self.mask);
+            Gpio.registers.out.set(self.mask());
         }
         fn width(self: Pins) u32 {
-            return 32 - @clz(u32, self.mask) - @ctz(u32, self.mask);
+            return 32 - @clz(u32, self.mask()) - @ctz(u32, self.mask());
         }
         pub fn write(self: Pins, x: u32) void {
-            Gpio.registers.out.write((Gpio.registers.out & ~self.mask) | ((x << self.position(0)) & self.mask));
+            Gpio.registers.out.write((Gpio.registers.out & ~self.mask()) | ((x << self.position(0)) & self.mask()));
         }
     };
 
@@ -276,11 +279,11 @@ pub const lib = struct {
                 pub const device_address = p.register(0x588);
             };
             pub fn prepare() void {
-                Pins.i2c.scl.connectI2c();
-                Pins.i2c.sda.connectI2c();
+                Pins.of.i2c_scl.connectI2c();
+                Pins.of.i2c_sda.connectI2c();
                 registers.enable.write(0);
-                registers.pselscl.write(Pins.i2c.scl.position(0));
-                registers.pselsda.write(Pins.i2c.sda.position(0));
+                registers.pselscl.write(Pins.of.i2c_scl.position(0));
+                registers.pselsda.write(Pins.of.i2c_sda.position(0));
                 registers.frequency.write(.K400);
                 registers.enable.write(5);
             }
@@ -391,7 +394,7 @@ pub const lib = struct {
         }
         pub fn prepare() void {
             image = 0;
-            Pins.leds.all.directionSet();
+            Pins.of.leds.directionSet();
             clear();
             scan_lines_index = 0;
             putChar('Z');
@@ -423,7 +426,7 @@ pub const lib = struct {
         }
         pub fn update() void {
             if (scan_timer.isFinishedThenReset()) {
-                Pins.leds.all.clear();
+                Pins.of.leds.clear();
                 Gpio.registers.out.set((@as(u32, 1) << @truncate(u5, 13 + scan_lines_index)) | (@as(u32, ~scan_lines[scan_lines_index]) << 4));
                 // Pins.leds.anodes.maskBit(scan_lines_index).maskPlus(Pins.leds.cathodes.maskClear(scan_lines[scan_lines_index])).set();
                 scan_lines_index = (scan_lines_index + 1) % scan_lines.len;
@@ -908,9 +911,9 @@ pub const lib = struct {
             }
         }
         pub fn prepare() void {
-            Pins.target.txd.connectOutput();
-            registers.pin_select_rxd.write(Pins.target.rxd.position(0));
-            registers.pin_select_txd.write(Pins.target.txd.position(0));
+            Pins.of.target_txd.connectOutput();
+            registers.pin_select_rxd.write(Pins.of.target_rxd.position(0));
+            registers.pin_select_txd.write(Pins.of.target_txd.position(0));
             registers.enable.write(0x04);
             tasks.start_rx.do();
             tasks.start_tx.do();

@@ -4,8 +4,8 @@ const LightSensor = struct {
     var high: [3]u32 = undefined;
 
     fn prepare() void {
-        Pins.leds.all.clear();
-        Pins.leds.all.directionSet();
+        Pins.of.leds.clear();
+        Pins.of.leds.directionSet();
         var i: u32 = 0;
         while (i < low.len) : (i += 1) {
             low[i] = 0x7fffffff;
@@ -68,9 +68,9 @@ const LightSensorJustOne = struct {
         Adc.registers.enable.write(0);
         Adc.registers.config.write(.{ .resolution = 2, .refsel = 0, .inpsel = 0, .psel = @as(u8, 1) << @truncate(u3, ain) });
         Adc.registers.enable.write(1);
-        Pins.leds.anodes.clear();
-        Pins.leds.cathodes.set();
-        Pins.leds.all.directionSet();
+        Pins.of.led_anodes.clear();
+        Pins.of.led_cathodes.set();
+        Pins.of.leds.directionSet();
         Gpio.registers.out.set(column_mask);
         cycle_start = Timers[0].captureAndRead();
     }
@@ -172,7 +172,7 @@ const Accel = struct {
 const Compass = struct {
     const device = I2cs[0].device(0x0e);
     fn prepare() void {
-        device.confirm();
+        // device.confirm();
         useAutoReset: {
             const control_register2 = 0x11;
             const auto_mrst_en_mask = 0x80;

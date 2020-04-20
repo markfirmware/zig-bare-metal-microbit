@@ -141,7 +141,7 @@ const ThrottleActivity = struct {
                 update();
             }
 
-            fn pin() type {
+            fn pin() Pins {
                 return if (index == 0) Pins.buttons.a else Pins.buttons.b;
             }
 
@@ -271,7 +271,7 @@ const ThrottleActivity = struct {
                 pwm_width_ticks = 1000 * (100 - percent) * pwm_width_ticks_max / (100 * 1000);
                 Timers[1].registers.capture_compare[0].write(pwm_width_ticks);
                 Pins.ring1.clear();
-                Gpiote.registers.config[0].write(.{ .mode = .Task, .psel = Pins.ring1.id, .polarity = .Toggle, .outinit = .Low });
+                Gpiote.registers.config[0].write(.{ .mode = .Task, .psel = Pins.ring1.position(0), .polarity = .Toggle, .outinit = .Low });
                 Ppi.registers.channel_enable.set(ppi_channels_0_and_1_mask);
                 Timers[1].tasks.clear.do();
                 Timers[1].tasks.start.do();

@@ -145,114 +145,85 @@ pub const lib = struct {
     };
 
     pub const Pins = struct {
-        pub const ring0 = ioPin(3);
-        pub const ring1 = ioPin(2);
-        pub const ring2 = ioPin(1);
+        mask: u32,
+        pub const ring0 = pin(3);
+        pub const ring1 = pin(2);
+        pub const ring2 = pin(1);
         pub const leds = struct {
-            pub const cathodes = ioPinField(4, 9, 0x1ff0);
-            pub const anodes = ioPinField(13, 3, 0xe000);
-            pub const mask = anodes.mask | cathodes.mask;
+            pub const cathodes = pinField(4, 9);
+            pub const anodes = pinField(13, 3);
+            pub const all = anodes.maskPlus(cathodes);
         };
         pub const i2c = struct {
-            pub const scl = oPin(0);
-            pub const sda = ioPin(30);
+            pub const scl = pin(0);
+            pub const sda = pin(30);
+            pub const all = scl.mask | sda.mask;
         };
         pub const buttons = struct {
-            pub const a = iPin(17);
-            pub const b = iPin(26);
+            pub const a = pin(17);
+            pub const b = pin(26);
         };
         pub const target = struct {
-            pub const txd = oPin(24);
-            pub const rxd = iPin(25);
+            pub const txd = pin(24);
+            pub const rxd = pin(25);
         };
-        fn iPin(id: u32) type {
-            return pin(id);
+        pub fn clear(self: Pins) void {
+            Gpio.registers.out.clear(self.mask);
         }
-        fn ioPin(id: u32) type {
-            return pin(id);
+        pub fn connectI2c(self: Pins) void {
+            var i: u32 = 0;
+            while (i < self.width()) : (i += 1) {
+                Gpio.registers.config[self.position(i)].write(.{ .output_connected = 0, .input_disconnected = 0, .pull = .disabled, .drive = .s0d1, .sense = .disabled });
+            }
         }
-        fn pin(the_id: u32) type {
-            return struct {
-                pub const id = the_id;
-                pub const mask = 1 << id;
-                pub const direction = struct {
-                    pub fn set() void {
-                        Gpio.registers.direction.set(mask);
-                    }
-                };
-                pub fn clear() void {
-                    Gpio.registers.out.clear(mask);
-                }
-                pub fn connectI2c() void {
-                    Gpio.registers.config[id].write(.{ .output_connected = 0, .input_disconnected = 0, .pull = .disabled, .drive = .s0d1, .sense = .disabled });
-                }
-                pub fn connectInput() void {
-                    Gpio.registers.config[id].write(.{ .output_connected = 0, .input_disconnected = 0, .pull = .disabled, .drive = .s0s1, .sense = .disabled });
-                }
-                pub fn connectIo() void {
-                    Gpio.registers.config[id].write(.{ .output_connected = 1, .input_disconnected = 0, .pull = .disabled, .drive = .s0s1, .sense = .disabled });
-                }
-                pub fn connectOutput() void {
-                    Gpio.registers.config[id].write(.{ .output_connected = 1, .input_disconnected = 1, .pull = .disabled, .drive = .s0s1, .sense = .disabled });
-                }
-                pub fn read() u32 {
-                    return (Gpio.registers.in.read() & mask) >> id;
-                }
-                pub fn set() void {
-                    Gpio.registers.out.set(mask);
-                }
-            };
+        pub fn connectInput(self: Pins) void {
+            var i: u32 = 0;
+            while (i < self.width()) : (i += 1) {
+                Gpio.registers.config[self.position(i)].write(.{ .output_connected = 0, .input_disconnected = 0, .pull = .disabled, .drive = .s0s1, .sense = .disabled });
+            }
         }
-        fn oPin(id: u32) type {
-            return pin(id);
+        pub fn connectIo(self: Pins) void {
+            var i: u32 = 0;
+            while (i < self.width()) : (i += 1) {
+                Gpio.registers.config[self.position(i)].write(.{ .output_connected = 1, .input_disconnected = 0, .pull = .disabled, .drive = .s0s1, .sense = .disabled });
+            }
         }
-        fn iPinField(id: u32, width: u32) type {
-            return pinField(id, width);
+        pub fn connectOutput(self: Pins) void {
+            var i: u32 = 0;
+            while (i < self.width()) : (i += 1) {
+                Gpio.registers.config[self.position(i)].write(.{ .output_connected = 1, .input_disconnected = 1, .pull = .disabled, .drive = .s0s1, .sense = .disabled });
+            }
         }
-        fn ioPinField(id: u32, width: u32, mask: u32) type {
-            return pinField(id, width, mask);
+        pub fn directionClear(self: @This()) void {
+            Gpio.registers.direction.clear(self.mask);
         }
-        fn pinField(the_id: u32, the_width: u32, the_mask: u32) type {
-            return struct {
-                pub const id = the_id;
-                pub const mask = the_mask;
-                pub const width = the_width;
-                pub const direction = struct {
-                    pub fn setAll() void {
-                        Gpio.registers.direction.set(mask);
-                    }
-                };
-                pub fn clearAll() void {
-                    Gpio.registers.out.clear(mask);
-                }
-                pub fn connectAllInput() void {
-                    var i: u32 = id;
-                    while (i < id + width) : (i += 1) {
-                        Gpio.registers.config.write(id, .{ .output_connected = 0, .input_disconnected = 0, .pull = .disabled, .drive = .s0s1, .sense = .disabled });
-                    }
-                }
-                pub fn connectAllIo() void {
-                    var i: u32 = id;
-                    while (i < id + width) : (i += 1) {
-                        Gpio.registers.config.write(id, .{ .output_connected = 1, .input_disconnected = 0, .pull = .disabled, .drive = .s0s1, .sense = .disabled });
-                    }
-                }
-                pub fn connectAllOutput() void {
-                    var i: u32 = id;
-                    while (i < id + width) : (i += 1) {
-                        Gpio.registers.config.write(id, .{ .output_connected = 1, .input_disconnected = 1, .pull = .disabled, .drive = .s0s1, .sense = .disabled });
-                    }
-                }
-                pub fn read() u32 {
-                    return (Gpio.registers.in.read() & mask) >> id;
-                }
-                pub fn setAll() void {
-                    Gpio.registers.out.set(mask);
-                }
-            };
+        pub fn directionSet(self: @This()) void {
+            Gpio.registers.direction.set(self.mask);
         }
-        fn oPinField(id: u32, width: u32) type {
-            return pinField(id, width);
+        pub fn maskPlus(self: Pins, other: Pins) Pins {
+            return Pins{ .mask = self.mask | other.mask };
+        }
+        pub fn pin(comptime the_position: u32) Pins {
+            return pinField(the_position, 1);
+        }
+        pub fn pinField(the_position: u5, the_width: u5) Pins {
+            const mask = (@as(u32, 1) << the_width) - 1 << the_position;
+            return Pins{ .mask = mask };
+        }
+        fn position(self: Pins, i: u32) u5 {
+            return @truncate(u5, @ctz(u32, self.mask) + i);
+        }
+        pub fn read(self: Pins) u32 {
+            return (Gpio.registers.in.read() & self.mask) >> self.position(0);
+        }
+        pub fn set(self: Pins) void {
+            Gpio.registers.out.set(self.mask);
+        }
+        fn width(self: Pins) u32 {
+            return 32 - @clz(u32, self.mask) - @ctz(u32, self.mask);
+        }
+        pub fn write(self: Pins, x: u32) void {
+            Gpio.registers.out.write((Gpio.registers.out & ~self.mask) | ((x << self.position(0)) & self.mask));
         }
     };
 
@@ -308,8 +279,8 @@ pub const lib = struct {
                 Pins.i2c.scl.connectI2c();
                 Pins.i2c.sda.connectI2c();
                 registers.enable.write(0);
-                registers.pselscl.write(Pins.i2c.scl.id);
-                registers.pselsda.write(Pins.i2c.sda.id);
+                registers.pselscl.write(Pins.i2c.scl.position(0));
+                registers.pselsda.write(Pins.i2c.sda.position(0));
                 registers.frequency.write(.K400);
                 registers.enable.write(5);
             }
@@ -335,6 +306,7 @@ pub const lib = struct {
             }
             pub fn device(comptime device_address: u32) type {
                 return struct {
+                    pub const address = device_address;
                     pub fn confirm() void {
                         if (!probe(device_address)) {
                             panicf("i2c device 0x{x} is not responding", .{device_address});
@@ -419,7 +391,7 @@ pub const lib = struct {
         }
         pub fn prepare() void {
             image = 0;
-            Gpio.registers.direction.set(Pins.leds.mask);
+            Pins.leds.all.directionSet();
             clear();
             scan_lines_index = 0;
             putChar('Z');
@@ -451,8 +423,9 @@ pub const lib = struct {
         }
         pub fn update() void {
             if (scan_timer.isFinishedThenReset()) {
-                Gpio.registers.out.clear(Pins.leds.mask);
+                Pins.leds.all.clear();
                 Gpio.registers.out.set((@as(u32, 1) << @truncate(u5, 13 + scan_lines_index)) | (@as(u32, ~scan_lines[scan_lines_index]) << 4));
+                // Pins.leds.anodes.maskBit(scan_lines_index).maskPlus(Pins.leds.cathodes.maskClear(scan_lines[scan_lines_index])).set();
                 scan_lines_index = (scan_lines_index + 1) % scan_lines.len;
             }
         }
@@ -936,8 +909,8 @@ pub const lib = struct {
         }
         pub fn prepare() void {
             Pins.target.txd.connectOutput();
-            registers.pin_select_rxd.write(Pins.target.rxd.id);
-            registers.pin_select_txd.write(Pins.target.txd.id);
+            registers.pin_select_rxd.write(Pins.target.rxd.position(0));
+            registers.pin_select_txd.write(Pins.target.txd.position(0));
             registers.enable.write(0x04);
             tasks.start_rx.do();
             tasks.start_tx.do();
@@ -1031,12 +1004,13 @@ pub const lib = struct {
         log("\npanicf(): " ++ fmt, args);
         var it = std.debug.StackIterator.init(null, null);
         while (it.next()) |stacked_address| {
-            dumpReturnAddress(stacked_address - 1);
+            // dumpReturnAddress(stacked_address - 1);
         }
         hangf("panic completed", .{});
     }
 
     fn dumpReturnAddress(return_address: usize) void {
+        var symbols = symbol_table_ptr[0..symbol_table_len];
         var symbol_index: usize = 0;
         var line: []const u8 = "";
         var i: u32 = 0;
@@ -1046,7 +1020,7 @@ pub const lib = struct {
                 j += 1;
             }
             const next_line = symbols[i..j];
-            const symbol_address = std.fmt.parseUnsigned(usize, next_line[0..8], 16) catch 0;
+            const symbol_address = std.fmt.parseUnsigned(usize, next_line[0..5], 16) catch 0;
             if (symbol_address >= return_address) {
                 break;
             }
@@ -1054,7 +1028,7 @@ pub const lib = struct {
             i = j + 1;
         }
         if (line.len >= 3) {
-            log("{x:5} in {}", .{ return_address, line[3..] });
+            log("{x:5} in {}", .{ return_address, line });
         } else {
             log("{x:5}", .{return_address});
         }
@@ -1084,7 +1058,7 @@ pub const lib = struct {
     const format = Uart.format;
     const model = @import("build.zig").model;
     const std = @import("std");
-    const symbols = @embedFile("symbols.txt");
+    // const symbols = @embedFile("symbols.txt");
 
     extern var __bss_start: u8;
     extern var __bss_end: u8;
@@ -1146,3 +1120,6 @@ export fn __sync_lock_test_and_set_4(ptr: *u32, val: u32) callconv(.C) u32 {
     // enable the IRQ
     return old_val;
 }
+
+export var symbol_table_ptr: [*]u8 linksection(".text") = undefined;
+export var symbol_table_len: u32 linksection(".text") = undefined;

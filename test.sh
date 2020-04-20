@@ -14,9 +14,8 @@ touch symbols.txt
 zig build -Dmain=$SOURCE
 
 llvm-objdump -x --source zig-cache/bin/main > main.asm
-grep '^00000000.*:$' main.asm | sed 's/^00000000//' > symbols.txt
+grep '^00000000.*:$' main.asm | sed 's/^00000000000//' | sed 's/:$//' | grep -v ' [_$]' > symbols.txt
 ls -lt symbols.txt
-echo did not use newest symbols.txt
 #zig build -Dmain=$SOURCE
 ls -l zig-cache/bin/main.img main.hex
 

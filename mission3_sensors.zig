@@ -4,10 +4,8 @@ const LightSensor = struct {
     var high: [3]u32 = undefined;
 
     fn prepare() void {
-        Pins.leds.anodes.clearAll();
-        Pins.leds.cathodes.clearAll();
-        Pins.leds.anodes.direction.setAll();
-        Pins.leds.cathodes.direction.setAll();
+        Pins.leds.all.clear();
+        Pins.leds.all.directionSet();
         var i: u32 = 0;
         while (i < low.len) : (i += 1) {
             low[i] = 0x7fffffff;
@@ -64,33 +62,31 @@ const LightSensorJustOne = struct {
     const col: u32 = 1;
     const ain = col + 4;
     const column_mask = @as(u32, 0x10) << @truncate(u5, col - 1);
-    var ready = false;
+    var cycle_start: u32 = undefined;
 
     fn prepare() void {
-        Pins.leds.anodes.clearAll();
-        Pins.leds.cathodes.clearAll();
-        Pins.leds.anodes.directionSetAll();
-        Pins.leds.cathodes.directionSetAll();
+        Adc.registers.enable.write(0);
+        Adc.registers.config.write(.{ .resolution = 2, .refsel = 0, .inpsel = 0, .psel = @as(u8, 1) << @truncate(u3, ain) });
+        Adc.registers.enable.write(1);
+        Pins.leds.anodes.clear();
+        Pins.leds.cathodes.set();
+        Pins.leds.all.directionSet();
+        Gpio.registers.out.set(column_mask);
+        cycle_start = Timers[0].captureAndRead();
     }
 
     fn update() void {
-        if (!ready) {
-            Adc.registers.enable.write(0);
-            Adc.registers.config.write(.{ .resolution = 2, .refsel = 0, .inpsel = 2, .psel = @as(u8, 1) << @truncate(u3, ain) });
-            Adc.registers.enable.write(1);
-            // ready = true;
-            TimeKeeper.delay(5 * 1000);
+        const new_cycle_start = Timers[0].captureAndRead();
+        if (new_cycle_start -% cycle_start >= 500 * 1000) {
+            cycle_start = new_cycle_start;
+            // Gpio.registers.direction.clear(column_mask); // also turn off anode?
+            // TimeKeeper.delay(5 * 1000);
+            Adc.tasks.start.do();
+            while (Adc.registers.busy.read() != 0) {}
+            const result = Adc.registers.result.read();
+            log("ain{} {} ", .{ ain, result });
+            // Gpio.registers.direction.set(column_mask);
         }
-
-        Gpio.registers.out.set(column_mask);
-        Gpio.registers.direction.clear(column_mask);
-        Adc.tasks.start.do();
-        // TimeKeeper.delay(5 * 1000);
-        while (Adc.busy_registers.busy != 0) {}
-        format("ain{} {} ", .{ ain, Adc.registers.result });
-        Gpio.registers.out.clear(column_mask);
-        Gpio.registers.direction.set(column_mask);
-        log("", .{});
     }
 };
 
@@ -108,11 +104,12 @@ fn main() callconv(.C) noreturn {
 
     I2cs[0].prepare();
     Accel.prepare();
-    LightSensor.prepare();
+    Compass.prepare();
+    LightSensorJustOne.prepare();
 
     while (true) {
         CycleActivity.update();
-        LightSensor.update();
+        LightSensorJustOne.update();
         TerminalActivity.update();
     }
 }
@@ -172,6 +169,28 @@ const Accel = struct {
     }
 };
 
+const Compass = struct {
+    const device = I2cs[0].device(0x0e);
+    fn prepare() void {
+        device.confirm();
+        useAutoReset: {
+            const control_register2 = 0x11;
+            const auto_mrst_en_mask = 0x80;
+            device.write(control_register2, auto_mrst_en_mask);
+        }
+        activate: {
+            const control_register1 = 0x10;
+            const active_mask = 0x01;
+            device.write(control_register1, active_mask);
+        }
+    }
+    fn update() void {
+        var data_buf: [0x40]u8 = undefined;
+        I2cs[0].readBlockingPanic(device.address, &data_buf, 0x00, 0x11);
+        log("compass {x}", .{data_buf[0..0x12]});
+    }
+};
+
 const CycleActivity = struct {
     var cycle_counter: u32 = undefined;
     var cycle_time: u32 = undefined;
@@ -200,6 +219,7 @@ const CycleActivity = struct {
         if (up_timer.isFinishedThenReset()) {
             up_time_seconds += 1;
             Accel.update();
+            Compass.update();
         }
     }
 };

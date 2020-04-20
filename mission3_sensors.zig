@@ -8,7 +8,7 @@ const LightSensor = struct {
         Pins.of.leds.directionSet();
         var i: u32 = 0;
         while (i < low.len) : (i += 1) {
-            low[i] = 0x7fffffff;
+            low[i] = 0xffffffff;
             high[i] = 0;
         }
         cycle_start = Timers[0].captureAndRead();
@@ -22,11 +22,11 @@ const LightSensor = struct {
             var col: u32 = 1;
             while (col <= 3) : (col += 1) {
                 const ain = col + 4;
-                const column_pin = Pins{ .led_cathodes = @as(u9, 1) << @truncate(u4, col - 1) };
+                const column_pin = Pins{ .led_cathodes = 1 << col - 1 };
 
                 Adc.registers.enable.write(0);
                 // Adc.registers.config = 2 | (0 << @ctz(u32, Adc.registers_config_masks.refsel)) | (2 << @ctz(u32, Adc.registers_config_masks.inpsel)) | ((@as(u32, 1) << @truncate(u5, ain)) << @ctz(u32, Adc.registers_config_masks.psel));
-                Adc.registers.config.write(.{ .resolution = 2, .refsel = 0, .inpsel = 2, .psel = @as(u8, 1) << @truncate(u3, ain) });
+                Adc.registers.config.write(.{ .resolution = 2, .refsel = 0, .inpsel = 2, .psel = 1 << ain });
                 Adc.registers.enable.write(1);
 
                 column_pin.set();
@@ -61,12 +61,12 @@ const LightSensor = struct {
 const LightSensorJustOne = struct {
     const col: u32 = 1;
     const ain = col + 4;
-    const column_pin = Pins{ .led_cathodes = @as(u9, 1) << @truncate(u4, col - 1) };
+    const column_pin = Pins{ .led_cathodes = 1 << col - 1 };
     var cycle_start: u32 = undefined;
 
     fn prepare() void {
         Adc.registers.enable.write(0);
-        Adc.registers.config.write(.{ .resolution = 2, .refsel = 0, .inpsel = 0, .psel = @as(u8, 1) << @truncate(u3, ain) });
+        Adc.registers.config.write(.{ .resolution = 2, .refsel = 0, .inpsel = 0, .psel = 1 << ain });
         Adc.registers.enable.write(1);
         Pins.of.led_anodes.clear();
         Pins.of.led_cathodes.set();
@@ -172,7 +172,7 @@ const Accel = struct {
 const Compass = struct {
     const device = I2cs[0].device(0x0e);
     fn prepare() void {
-        // device.confirm();
+        device.confirm();
         useAutoReset: {
             const control_register2 = 0x11;
             const auto_mrst_en_mask = 0x80;

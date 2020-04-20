@@ -79,12 +79,6 @@ const ThrottleActivity = struct {
     }
 
     fn releaseSimulatedButtons() void {
-        //      comptime var i: u32 = 0;
-        //      while (i < 1) : (i += 1) {
-        //          if (button(i).is_simulation_pressed) {
-        //              button(i).toggleSimulated();
-        //          }
-        //      }
         if (button(0).is_simulation_pressed) {
             button(0).toggleSimulated();
         }

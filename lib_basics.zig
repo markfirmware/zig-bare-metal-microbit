@@ -180,7 +180,7 @@ pub const lib = struct {
         pub fn connectI2c(self: Pins) void {
             var i: u32 = 0;
             while (i < self.width()) : (i += 1) {
-                Gpio.registers.config[i].write(.{ .output_connected = 0, .input_disconnected = 0, .pull = .disabled, .drive = .s0d1, .sense = .disabled });
+                Gpio.registers.config[self.position(i)].write(.{ .output_connected = 0, .input_disconnected = 0, .pull = .disabled, .drive = .s0d1, .sense = .disabled });
             }
         }
         pub fn connectInput(self: Pins) void {
@@ -295,12 +295,12 @@ pub const lib = struct {
                 while (true) {
                     var e = registers.errorsrc.read();
                     if (e.overrun == 1 or e.data_nack == 1) {
-                        panicf("i2c probe unexpected errorsrc 0x{x}", .{e});
+                        panicf("i2c probe unexpected errorsrc {x}", .{e});
                     } else if (e.address_nack == 1) {
                         registers.errorsrc.write(e);
                         e = registers.errorsrc.read();
                         if (@bitCast(u32, e) != 0) {
-                            panicf("could not clear address_nack 0x{x}", .{e});
+                            panicf("could not clear address_nack {x}", .{e});
                         }
                         return false;
                     } else if (Timers[0].captureAndRead() -% start > 10 * 1000) {
@@ -355,7 +355,14 @@ pub const lib = struct {
                         the_event.clear();
                         return;
                     }
-                    if (@bitCast(u32, registers.errorsrc.read()) != 0) {
+                    var e = registers.errorsrc.read();
+                    if (e.address_nack == 1) {
+                        e.address_nack = 0;
+                        if (@bitCast(u32, e) == 0) {
+                            return error.I2cAddressNack;
+                        }
+                    }
+                    if (@bitCast(u32, e) != 0) {
                         return error.I2cSeeErrorSourceRegister;
                     }
                     if (Timers[0].captureAndRead() -% start > 10 * 1000) {

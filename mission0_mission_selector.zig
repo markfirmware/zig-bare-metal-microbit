@@ -47,7 +47,6 @@ const Key = union(enum) {
 fn main() callconv(.C) noreturn {
     Bss.prepare();
     Exceptions.prepare();
-    Mission.prepare();
     Uart.prepare();
     Timers[0].prepare();
     LedMatrix.prepare();
@@ -56,9 +55,6 @@ fn main() callconv(.C) noreturn {
     KeyboardActivity.prepare();
     StatusActivity.prepare();
 
-    Mission.register("turn on all leds without libraries", "mission1_turn_on_all_leds_without_libraries.zig");
-    Mission.register("model railroad motor pwm controlled by buttons", "mission2_model_railroad_pwm.zig");
-    Mission.register("sensors - temperature,  orientation", "mission3_sensors.zig");
     log("available missions:", .{});
     for (Mission.missions) |*m, i| {
         log("{}. {}", .{ i + 1, m.title });
@@ -77,6 +73,7 @@ const CycleActivity = struct {
     var last_cycle_start: ?u32 = undefined;
     var last_second_ticks: u32 = undefined;
     var max_cycle_time: u32 = undefined;
+    var toggle_leds: bool = undefined;
     var up_time_seconds: u32 = undefined;
 
     fn prepare() void {
@@ -86,6 +83,7 @@ const CycleActivity = struct {
         last_second_ticks = 0;
         max_cycle_time = 0;
         up_time_seconds = 0;
+        toggle_leds = true;
     }
 
     fn update() void {
@@ -95,6 +93,9 @@ const CycleActivity = struct {
         if (new_cycle_start -% last_second_ticks >= 1000 * 1000) {
             up_time_seconds += 1;
             last_second_ticks = new_cycle_start;
+            if (toggle_leds) {
+                LedMatrix.putImage(if (up_time_seconds % 2 == 0) @as(u32, 0) else 0x01ffffff);
+            }
         }
         if (last_cycle_start) |start| {
             cycle_time = new_cycle_start -% start;
@@ -212,6 +213,9 @@ const KeyboardActivity = struct {
             },
             'd' => {
                 LedMatrix.putImage(0x00000000);
+            },
+            'l' => {
+                CycleActivity.toggle_leds = true;
             },
             '1', '2', '3', '4', '5', '6', '7', '8', '9' => {
                 Mission.missions[byte - '1'].activate();
@@ -340,15 +344,20 @@ fn restoreInputLine() void {
     Terminal.move(99, KeyboardActivity.column);
 }
 
+const release_tag = "0.4";
+const status_display_lines = 6 + 5;
+
 const Mission = struct {
-    title: []const u8,
+    const missions = [_]Mission{
+        mission("turn on all leds without libraries", "mission1_turn_on_all_leds_without_libraries.zig"),
+        mission("model railroad motor pwm controlled by buttons", "mission2_model_railroad_pwm.zig"),
+        mission("sensors - temperature,  orientation", "mission3_sensors.zig"),
+    };
     panic: fn ([]const u8, ?*builtin.StackTrace) noreturn,
+    title: []const u8,
     vector_table_address: *allowzero const u32,
 
-    var missions: []Mission = undefined;
-    var missions_buf: [5]Mission = undefined;
-
-    fn activate(self: *Mission) void {
+    fn activate(self: *const Mission) void {
         const reset_sp = @intToPtr(*allowzero u32, @ptrToInt(self.vector_table_address) + 0).*;
         const reset_pc = @intToPtr(*allowzero u32, @ptrToInt(self.vector_table_address) + 4).*;
         asm volatile (
@@ -360,28 +369,20 @@ const Mission = struct {
         );
     }
 
-    fn prepare() void {
-        missions = missions_buf[0..0];
-    }
-
-    fn register(comptime title: []const u8, comptime source_file: []const u8) void {
-        missions = missions_buf[0 .. missions.len + 1];
-        var m = &missions[missions.len - 1];
+    fn mission(comptime title: []const u8, comptime source_file: []const u8) Mission {
+        var m: Mission = undefined;
         const import = @import(source_file);
         m.title = title;
         m.panic = import.panic;
         m.vector_table_address = @ptrCast(*allowzero const u32, &import.vector_table);
+        return m;
     }
 };
 
-const release_tag = "0.4";
-const status_display_lines = 6 + 5;
-
-pub const mission_number: u32 = 0;
-
-pub const vector_table linksection(".vector_table.primary") = simpleVectorTable(main);
+pub const vt = VectorTable.simple(0, main);
+pub var vector_table = vt.table;
 comptime {
-    @export(vector_table, .{ .name = "vector_table_mission0" });
+    @export(vector_table, vt.options);
 }
 
 usingnamespace @import("lib_basics.zig").typical;

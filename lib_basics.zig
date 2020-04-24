@@ -55,13 +55,16 @@ pub const lib = struct {
             pub const busy = p.register(0x400);
             pub const enable = p.register(0x500);
             pub const config = p.typedRegister(0x504, packed struct {
-                resolution: u2 = 0,
-                inpsel: u3 = 0,
-                refsel: u2 = 0,
+                resolution: Resolution = .bits8,
+                inpsel: Inpsel = .psel,
+                refsel: Refsel = .vbg,
                 unused1: u1 = 0,
                 psel: u8 = 0,
                 extrefsel: u2 = 0,
                 unused2: u14 = 0,
+                pub const Inpsel = enum(u3) { psel, two_thirds_psel, one_third_psel, two_thirds_vdd = 5, one_third_vdd };
+                pub const Refsel = enum(u2) { vbg, two_thirds_vdd = 2, one_third_vdd };
+                pub const Resolution = enum(u2) { bits8, bits9, bits10 };
             });
             pub const result = p.register(0x508);
         };
@@ -131,7 +134,8 @@ pub const lib = struct {
             pub const out = p.typedRegistersWriteSetClear(0x504, 0x508, 0x50c, Pins);
             pub const in = p.typedRegister(0x510, Pins);
             pub const direction = p.typedRegistersWriteSetClear(0x514, 0x518, 0x51c, Pins);
-            pub const config = p.typedRegisterArray(32, 0x700, packed struct {
+            pub const config = p.typedRegisterArray(32, 0x700, Config);
+            pub const Config = packed struct {
                 output_connected: u1,
                 input_disconnected: u1,
                 pull: enum(u2) { disabled, down, up = 3 },
@@ -140,7 +144,7 @@ pub const lib = struct {
                 unused2: u5 = 0,
                 sense: enum(u2) { disabled, high = 2, low },
                 unused3: u14 = 0,
-            });
+            };
         };
     };
 
@@ -177,29 +181,23 @@ pub const lib = struct {
         pub fn clear(self: Pins) void {
             Gpio.registers.out.clear(self);
         }
-        pub fn connectI2c(self: Pins) void {
+        pub fn config(self: Pins, the_config: Gpio.registers.Config) void {
             var i: u32 = 0;
             while (i < self.width()) : (i += 1) {
-                Gpio.registers.config[self.position(i)].write(.{ .output_connected = 0, .input_disconnected = 0, .pull = .disabled, .drive = .s0d1, .sense = .disabled });
+                Gpio.registers.config[self.position(i)].write(the_config);
             }
+        }
+        pub fn connectI2c(self: Pins) void {
+            self.config(.{ .output_connected = 0, .input_disconnected = 0, .pull = .disabled, .drive = .s0d1, .sense = .disabled });
         }
         pub fn connectInput(self: Pins) void {
-            var i: u32 = 0;
-            while (i < self.width()) : (i += 1) {
-                Gpio.registers.config[self.position(i)].write(.{ .output_connected = 0, .input_disconnected = 0, .pull = .disabled, .drive = .s0s1, .sense = .disabled });
-            }
+            self.config(.{ .output_connected = 0, .input_disconnected = 0, .pull = .disabled, .drive = .s0s1, .sense = .disabled });
         }
         pub fn connectIo(self: Pins) void {
-            var i: u32 = 0;
-            while (i < self.width()) : (i += 1) {
-                Gpio.registers.config[self.position(i)].write(.{ .output_connected = 1, .input_disconnected = 0, .pull = .disabled, .drive = .s0s1, .sense = .disabled });
-            }
+            self.config(.{ .output_connected = 1, .input_disconnected = 0, .pull = .disabled, .drive = .s0s1, .sense = .disabled });
         }
         pub fn connectOutput(self: Pins) void {
-            var i: u32 = 0;
-            while (i < self.width()) : (i += 1) {
-                Gpio.registers.config[self.position(i)].write(.{ .output_connected = 1, .input_disconnected = 1, .pull = .disabled, .drive = .s0s1, .sense = .disabled });
-            }
+            self.config(.{ .output_connected = 1, .input_disconnected = 1, .pull = .disabled, .drive = .s0s1, .sense = .disabled });
         }
         pub fn directionClear(self: @This()) void {
             Gpio.registers.direction.clear(self.mask());
@@ -214,6 +212,9 @@ pub const lib = struct {
         pub fn maskUnion(self: Pins, other: Pins) Pins {
             return @bitCast(Pins, self.mask() | other.mask());
         }
+        pub fn outRead(self: Pins) u32 {
+            return (@bitCast(u32, Gpio.registers.out.read()) & self.mask()) >> self.position(0);
+        }
         fn position(self: Pins, i: u32) u5 {
             return @truncate(u5, @ctz(u32, self.mask()) + i);
         }
@@ -227,7 +228,12 @@ pub const lib = struct {
             return 32 - @clz(u32, self.mask()) - @ctz(u32, self.mask());
         }
         pub fn write(self: Pins, x: u32) void {
-            Gpio.registers.out.write((Gpio.registers.out & ~self.mask()) | ((x << self.position(0)) & self.mask()));
+            var new = Gpio.registers.out.read().mask() & ~self.mask();
+            new |= (x << self.position(0)) & self.mask();
+            Gpio.registers.out.write(@bitCast(Pins, new));
+        }
+        pub fn writeWholeMask(self: Pins) void {
+            Gpio.registers.out.write(self);
         }
     };
 
@@ -616,8 +622,9 @@ pub const lib = struct {
                 e.address = @intToPtr(*align(4) volatile u32, base + offset);
                 return e;
             }
-            fn typedRegister(comptime offset: u32, comptime layout: type) type {
+            fn typedRegister(comptime offset: u32, comptime the_layout: type) type {
                 return struct {
+                    pub const layout = the_layout;
                     pub noinline fn read() layout {
                         return @ptrCast(*align(4) volatile layout, address).*;
                     }
@@ -1058,16 +1065,21 @@ pub const lib = struct {
         panicf("exception {}", .{isr_number});
     }
 
-    pub fn simpleVectorTable(main: fn () callconv(.C) noreturn) [1 + 15 + model.number_of_peripherals]fn () callconv(.C) noreturn {
-        return .{
-            model.initial_sp, main,      exception, exception, exception, exception, exception, exception,
-            exception,        exception, exception, exception, exception, exception, exception, exception,
-            exception,        exception, exception, exception, exception, exception, exception, exception,
-            exception,        exception, exception, exception, exception, exception, exception, exception,
-            exception,        exception, exception, exception, exception, exception, exception, exception,
-            exception,        exception, exception, exception, exception, exception, exception, exception,
-        };
-    }
+    pub const VectorTable = struct {
+        const T = fn () callconv(.C) noreturn;
+        const table_len = 1 + 15 + model.number_of_peripherals;
+        options: builtin.ExportOptions,
+        table: [table_len]T,
+        pub fn simple(comptime mission_id: u32, comptime main: T) VectorTable {
+            var mission_id_buf: [3]u8 = undefined;
+            const symbol_name = "vector_table_" ++ (std.fmt.bufPrint(&mission_id_buf, "{}", .{mission_id}) catch unreachable);
+            const section_name = if (mission_id == 0) ".vector_table.primary" else ".vector_table";
+            return .{
+                .options = .{ .name = symbol_name, .section = section_name },
+                .table = [_]T{ model.initial_sp, main } ++ [1]T{exception} ** (table_len - 2),
+            };
+        }
+    };
 
     const assert = std.debug.assert;
     const builtin = std.builtin;
@@ -1103,7 +1115,6 @@ pub const typical = struct {
     pub const Ficr = lib.Ficr;
     pub const format = Uart.format;
     pub const Gpio = lib.Gpio;
-    pub const Gpio2 = lib.Gpio2;
     pub const Gpiote = lib.Gpiote;
     pub const I2cs = lib.I2cs;
     pub const lib_basics = lib;
@@ -1123,11 +1134,14 @@ pub const typical = struct {
     pub const Terminal = lib.Terminal;
     pub const TimeKeeper = lib.TimeKeeper;
     pub const Timers = lib.Timers;
-    pub const linkVectorTable = lib.linkVectorTable;
     pub const Uart = lib.Uart;
     pub const Uicr = lib.Uicr;
+    pub const VectorTable = lib.VectorTable;
     pub const Wdt = lib.Wdt;
 };
+
+export var symbol_table_ptr: [*]u8 linksection(".text") = undefined;
+export var symbol_table_len: u32 linksection(".text") = undefined;
 
 export fn __sync_lock_test_and_set_4(ptr: *u32, val: u32) callconv(.C) u32 {
     // disable the IRQ
@@ -1136,6 +1150,3 @@ export fn __sync_lock_test_and_set_4(ptr: *u32, val: u32) callconv(.C) u32 {
     // enable the IRQ
     return old_val;
 }
-
-export var symbol_table_ptr: [*]u8 linksection(".text") = undefined;
-export var symbol_table_len: u32 linksection(".text") = undefined;

@@ -385,11 +385,10 @@ const TerminalActivity = struct {
 
 const status_display_lines = 6 + 6;
 
-pub const mission_number: u32 = 2;
-
-pub const vector_table linksection(".vector_table") = simpleVectorTable(main);
+pub const vt = VectorTable.simple(2, main);
+pub var vector_table = vt.table;
 comptime {
-    @export(vector_table, .{ .name = "vector_table_mission2" });
+    @export(vector_table, vt.options);
 }
 
 usingnamespace @import("lib_basics.zig").typical;

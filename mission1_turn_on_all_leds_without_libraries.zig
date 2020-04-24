@@ -16,24 +16,10 @@ pub fn panic(message: []const u8, trace: ?*@import("std").builtin.StackTrace) no
     while (true) {}
 }
 
-pub const mission_number: u32 = 1;
-
 const initial_sp = @intToPtr(fn () callconv(.C) noreturn, 0x20004000);
-pub const vector_table linksection(".vector_table") = [1 + 1]fn () callconv(.C) noreturn{
+pub const vector_table = [1 + 1]fn () callconv(.C) noreturn{
     initial_sp, main,
 };
-
 comptime {
-    @export(vector_table, .{ .name = "vector_table_mission1" });
-    if (@import("root").mission_number == mission_number) {
-        @export(__sync_lock_test_and_set_4, .{ .name = "__sync_lock_test_and_set_4" });
-    }
-}
-
-fn __sync_lock_test_and_set_4(ptr: *u32, val: u32) callconv(.C) u32 {
-    // disable the IRQ
-    const old_val = ptr.*;
-    ptr.* = val;
-    // enable the IRQ
-    return old_val;
+    @export(vector_table, .{ .name = "vector_table_1", .section = ".vector_tsble" });
 }

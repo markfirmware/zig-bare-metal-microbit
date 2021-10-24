@@ -17,7 +17,7 @@ export fn mission0_main() noreturn {
     Mission.register(&mission3_vector_table, "sensors - temperature,  orientation", "mission3_sensors.zig");
     log("available missions:", .{});
     for (Mission.missions) |*m, i| {
-        log("{}. {}", .{ i + 1, m.title });
+        log("{}. {s}", .{ i + 1, m.title });
     }
 
     while (true) {
@@ -149,7 +149,7 @@ const Mission = struct {
             \\ bx %[reset_pc]
             :
             : [reset_pc] "{r0}" (reset_pc),
-              [reset_sp] "{r1}" (reset_sp)
+              [reset_sp] "{r1}" (reset_sp),
         );
     }
 

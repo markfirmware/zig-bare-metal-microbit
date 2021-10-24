@@ -511,7 +511,7 @@ pub const lib = struct {
             Uart.writeText(csi ++ "?25l");
         }
 
-        pub fn line(comptime fmt: []const u8, args: var) void {
+        pub fn line(comptime fmt: []const u8, args: anytype) void {
             format(fmt, args);
             pair(0, 0, "K");
             Uart.writeText("\n");
@@ -523,13 +523,13 @@ pub const lib = struct {
 
         pub fn pair(a: u32, b: u32, letter: []const u8) void {
             if (a <= 1 and b <= 1) {
-                format("{}{}", .{ csi, letter });
+                format("{s}{s}", .{ csi, letter });
             } else if (b <= 1) {
-                format("{}{}{}", .{ csi, a, letter });
+                format("{s}{}{s}", .{ csi, a, letter });
             } else if (a <= 1) {
-                format("{};{}{}", .{ csi, b, letter });
+                format("{s};{}{s}", .{ csi, b, letter });
             } else {
-                format("{}{};{}{}", .{ csi, a, b, letter });
+                format("{s}{};{}{s}", .{ csi, a, b, letter });
             }
         }
 
@@ -569,16 +569,16 @@ pub const lib = struct {
             return self.capture() -% self.start_time;
         }
 
-        fn prepare(self: *TimeKeeper, duration: u32) void {
+        pub fn prepare(self: *TimeKeeper, duration: u32) void {
             self.duration = duration;
             self.reset();
         }
 
-        fn isFinished(self: *TimeKeeper) bool {
+        pub fn isFinished(self: *TimeKeeper) bool {
             return self.elapsed() >= self.duration;
         }
 
-        fn reset(self: *TimeKeeper) void {
+        pub fn reset(self: *TimeKeeper) void {
             self.start_time = self.capture();
         }
 
@@ -645,7 +645,7 @@ pub const lib = struct {
     }
 
     pub const Uart = struct {
-        var stream: std.io.OutStream(Uart, stream_error, writeTextError) = undefined;
+        var stream: std.io.Writer(Uart, stream_error, writeTextError) = undefined;
         var tx_busy: bool = undefined;
         var tx_queue: [3]u8 = undefined;
         var tx_queue_read: usize = undefined;
@@ -675,7 +675,7 @@ pub const lib = struct {
             return events.rx_ready == 1;
         }
 
-        pub fn format(comptime fmt: []const u8, args: var) void {
+        pub fn format(comptime fmt: []const u8, args: anytype) void {
             std.fmt.format(stream, fmt, args) catch |_| {};
         }
 
@@ -691,7 +691,7 @@ pub const lib = struct {
             }
         }
 
-        pub fn log(comptime fmt: []const u8, args: var) void {
+        pub fn log(comptime fmt: []const u8, args: anytype) void {
             format(fmt ++ "\n", args);
         }
 
@@ -798,7 +798,7 @@ pub const lib = struct {
         });
     };
 
-    pub fn hangf(comptime fmt: []const u8, args: var) noreturn {
+    pub fn hangf(comptime fmt: []const u8, args: anytype) noreturn {
         log(fmt, args);
         Uart.drainTxQueue();
         while (true) {}
@@ -812,11 +812,11 @@ pub const lib = struct {
         if (Exceptions.panic_handler) |handler| {
             handler(message, trace);
         } else {
-            panicf("panic(): {}", .{message});
+            panicf("panic(): {s}", .{message});
         }
     }
 
-    pub fn panicf(comptime fmt: []const u8, args: var) noreturn {
+    pub fn panicf(comptime fmt: []const u8, args: anytype) noreturn {
         @setCold(true);
         if (Exceptions.already_panicking) {
             hangf("\npanicked during panic", .{});
@@ -848,7 +848,7 @@ pub const lib = struct {
             i = j + 1;
         }
         if (line.len >= 3) {
-            log("{x:5} in {}", .{ return_address, line[3..] });
+            log("{x:5} in {s}", .{ return_address, line[3..] });
         } else {
             log("{x:5}", .{return_address});
         }

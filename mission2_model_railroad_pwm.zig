@@ -208,7 +208,7 @@ const ThrottleActivity = struct {
                             if (displayed_percent == 0) {
                                 log("scrolling '0' just once", .{});
                             } else {
-                                log("scrolling '{}' repeatedly", .{text});
+                                log("scrolling '{s}' repeatedly", .{text});
                             }
                         } else if (displayed_percent == 0) {
                             return;
@@ -247,9 +247,9 @@ const ThrottleActivity = struct {
         fn setPercent(message: []const u8, new: i32) void {
             const new_percent = @intCast(u32, math.min(math.max(new, 0), 100));
             if (new_percent != percent) {
-                log("{}: throttle changed from {} to {}", .{ message, percent, new_percent });
+                log("{s}: throttle changed from {} to {}", .{ message, percent, new_percent });
             } else {
-                log("{}: throttle remains at {}%", .{ message, percent });
+                log("{s}: throttle remains at {}%", .{ message, percent });
             }
             percent = new_percent;
             Timer1.tasks.stop = 1;

@@ -1,6 +1,6 @@
 pub fn main() !void {
     const cwd = fs.cwd();
-    const image = try cwd.openFile("zig-cache/bin/main.img", fs.File.OpenFlags{});
+    const image = try cwd.openFile("zig-out/bin/main.img", fs.File.OpenFlags{});
     defer image.close();
     const hex = try cwd.createFile("main.hex", fs.File.CreateFlags{});
     defer hex.close();
@@ -40,7 +40,7 @@ fn writeRecord(file: fs.File, offset: usize, code: u8, bytes: []u8) !void {
     }
     record[record.len - 1] = checksum;
     var line_buf: [1 + record_buf.len * 2 + 1]u8 = undefined;
-    _ = try file.write(try fmt.bufPrint(&line_buf, ":{X}\n", .{record}));
+    _ = try file.write(try fmt.bufPrint(&line_buf, ":{s}\n", .{std.fmt.fmtSliceHexUpper(record)}));
 }
 
 const assert = std.debug.assert;
